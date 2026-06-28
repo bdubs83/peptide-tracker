@@ -15,6 +15,7 @@ import type { PeptideSchedule } from "../../types/schedule";
 import type { StockItem } from "../../types/stock";
 import { DEFAULT_VAULT_USER_ID, type VaultUser } from "../../types/vaultUser";
 import { PEPTIDE_CATALOG } from "../../utils/peptideCatalog";
+import { getBlendDefinitionForCatalogId, getBlendDefinitionForName } from "../../utils/blendDefinitions";
 import {
   addDays,
   getLocalDateString,
@@ -25,25 +26,49 @@ import {
 import { formatDose, formatMl, formatUnits } from "../../utils/formatting";
 import { makePreferredScheduleMap } from "../../utils/scheduleUtils";
 
-type ReportType = "stock" | "history" | "schedule" | "stack" | "halfLife";
+type ReportSectionKey =
+  | "stockItems"
+  | "openVials"
+  | "stackSummary"
+  | "scheduleSummary"
+  | "scheduleByDate"
+  | "history"
+  | "halfLifeInputs"
+  | "halfLifeSummary";
 type LogStatus = InjectionLog["status"];
 type PdfTableSection = {
   title?: string;
   headers: string[];
   rows: string[][];
+  columnWeights?: number[];
 };
 type HalfLifeCurveInput = {
   label: string;
   halfLifeHours: number;
   events: Array<{ date: string; doseMg: number }>;
 };
+type HalfLifeInfo = {
+  hours: number;
+  source: string;
+};
+type HalfLifeReportRow = {
+  peptide: Peptide;
+  schedule: PeptideSchedule;
+  label: string;
+  halfLife: HalfLifeInfo;
+  dates: string[];
+  doseMultiplier: number;
+};
 
-const reportOptions: Array<{ value: ReportType; label: string; description: string }> = [
-  { value: "stock", label: "Vault Stock", description: "Unopened inventory and open vial status." },
+const reportSectionOptions: Array<{ value: ReportSectionKey; label: string; description: string }> = [
+  { value: "stockItems", label: "Vault Stock", description: "Unopened inventory and stock item details." },
+  { value: "openVials", label: "Open Vials", description: "Current open vials, source, next dose, and draw." },
+  { value: "stackSummary", label: "Stack Summary", description: "Selected active stack items and recent status." },
+  { value: "scheduleSummary", label: "Schedule Summary", description: "Dosing patterns and upcoming dates by item." },
+  { value: "scheduleByDate", label: "Schedule By Date", description: "Chronological injection schedule in the selected range." },
   { value: "history", label: "Injection History", description: "Completed, skipped, missed, and manual logs." },
-  { value: "schedule", label: "Injection Schedule", description: "Upcoming injection calendar by user and peptide." },
-  { value: "stack", label: "Individual Stack", description: "Selected peptides, schedules, stock, and recent history." },
-  { value: "halfLife", label: "Half-Life Loaded Stack", description: "Active scheduled items with half-life inputs and dose events." },
+  { value: "halfLifeInputs", label: "Half-Life Inputs", description: "Loaded items, blend components, half-lives, and dose events." },
+  { value: "halfLifeSummary", label: "Half-Life Curves", description: "Individual half-life totals and individual curve graph." },
 ];
 
 const historyLogStatuses: LogStatus[] = ["taken", "manual", "skipped", "missed"];
@@ -65,6 +90,13 @@ function formatDateTime(value?: string) {
 
 function normalizeSearchName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const catalogBySearchName = new Map<string, (typeof PEPTIDE_CATALOG)[number]>();
+for (const peptide of PEPTIDE_CATALOG) {
+  [peptide.name, peptide.originalProduct, ...peptide.alternateNames].forEach((name) => {
+    if (name) catalogBySearchName.set(normalizeSearchName(name), peptide);
+  });
 }
 
 function getUserId(value?: { vaultUserId?: string }) {
@@ -97,11 +129,7 @@ function getHalfLife(peptide: Peptide) {
     };
   }
 
-  const match = PEPTIDE_CATALOG.find((item) =>
-    [item.name, item.originalProduct, ...item.alternateNames]
-      .filter((name): name is string => Boolean(name))
-      .some((name) => normalizeSearchName(name) === normalizeSearchName(peptide.name))
-  );
+  const match = catalogBySearchName.get(normalizeSearchName(peptide.name));
 
   if (match?.normalizedHalfLifeHours) {
     return {
@@ -111,6 +139,54 @@ function getHalfLife(peptide: Peptide) {
   }
 
   return null;
+}
+
+function getBlendDefinitionForPeptide(peptide: Peptide) {
+  const catalogMatch = catalogBySearchName.get(normalizeSearchName(peptide.name));
+  return (catalogMatch ? getBlendDefinitionForCatalogId(catalogMatch.id) : undefined) || getBlendDefinitionForName(peptide.name);
+}
+
+function getDoseEventsForRange(
+  peptide: Peptide,
+  schedule: PeptideSchedule,
+  logs: InjectionLog[],
+  startDate: string,
+  endDate: string,
+  today: string
+) {
+  const eventsByKey = new Map<string, { date: string; doseMg: number }>();
+  const futureStartDate = startDate < today ? today : startDate;
+
+  getUpcomingInjectionDates(schedule, futureStartDate, endDate).forEach((date) => {
+    const dose = getScheduledDoseForDate(peptide, schedule, date);
+    eventsByKey.set(`scheduled-${date}`, {
+      date,
+      doseMg: doseToMg(dose.doseValue, dose.doseUnit),
+    });
+  });
+
+  logs
+    .filter(
+      (log) =>
+        log.peptideId === peptide.id &&
+        log.scheduledDate >= startDate &&
+        log.scheduledDate <= endDate
+    )
+    .forEach((log) => {
+      if (log.status === "skipped" || log.status === "missed") {
+        eventsByKey.delete(`scheduled-${log.scheduledDate}`);
+        return;
+      }
+      if (log.status === "taken" || log.status === "manual") {
+        eventsByKey.delete(`scheduled-${log.scheduledDate}`);
+        eventsByKey.set(`log-${log.scheduledDate}-${log.id}`, {
+          date: log.scheduledDate,
+          doseMg: doseToMg(log.doseValue, log.doseUnit),
+        });
+      }
+    });
+
+  return Array.from(eventsByKey.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function makeFileName(label: string) {
@@ -156,7 +232,16 @@ function drawPdfTable(doc: jsPDF, section: PdfTableSection, startY: number) {
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 14;
   const tableWidth = pageWidth - margin * 2;
-  const colWidth = tableWidth / Math.max(section.headers.length, 1);
+  const weights =
+    section.columnWeights && section.columnWeights.length === section.headers.length
+      ? section.columnWeights
+      : section.headers.map(() => 1);
+  const totalWeight = weights.reduce((sum, weight) => sum + Math.max(weight, 0.1), 0);
+  const colWidths = weights.map((weight) => (tableWidth * Math.max(weight, 0.1)) / totalWeight);
+  const colXs = colWidths.reduce<number[]>((xs, _width, index) => {
+    xs.push(index === 0 ? margin : xs[index - 1] + colWidths[index - 1]);
+    return xs;
+  }, []);
   let y = startY;
 
   const ensureSpace = (height: number) => {
@@ -174,16 +259,17 @@ function drawPdfTable(doc: jsPDF, section: PdfTableSection, startY: number) {
   }
 
   const drawHeader = () => {
-    ensureSpace(12);
+    const headerCells = section.headers.map((header, index) => doc.splitTextToSize(header, colWidths[index] - 4));
+    const headerHeight = Math.max(9, Math.max(...headerCells.map((cell) => cell.length), 1) * 4 + 5);
+    ensureSpace(headerHeight + 3);
     doc.setFillColor(241, 245, 249);
-    doc.rect(margin, y - 4, tableWidth, 9, "F");
+    doc.rect(margin, y - 4, tableWidth, headerHeight, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
-    section.headers.forEach((header, index) => {
-      const x = margin + index * colWidth + 2;
-      doc.text(doc.splitTextToSize(header, colWidth - 4), x, y);
+    headerCells.forEach((header, index) => {
+      doc.text(header, colXs[index] + 2, y);
     });
-    y += 8;
+    y += headerHeight - 1;
   };
 
   drawHeader();
@@ -199,7 +285,7 @@ function drawPdfTable(doc: jsPDF, section: PdfTableSection, startY: number) {
   section.rows.forEach((row) => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
-    const cells = row.map((cell) => doc.splitTextToSize(cell || "--", colWidth - 4));
+    const cells = row.map((cell, index) => doc.splitTextToSize(cell || "--", colWidths[index] - 4));
     const maxLines = Math.max(...cells.map((cell) => cell.length), 1);
     const rowHeight = Math.max(9, maxLines * 4 + 5);
     if (y + rowHeight > pageHeight - margin) {
@@ -211,8 +297,7 @@ function drawPdfTable(doc: jsPDF, section: PdfTableSection, startY: number) {
     doc.setDrawColor(226, 232, 240);
     doc.line(margin, y - 3, margin + tableWidth, y - 3);
     cells.forEach((cell, index) => {
-      const x = margin + index * colWidth + 2;
-      doc.text(cell, x, y);
+      doc.text(cell, colXs[index] + 2, y);
     });
     y += rowHeight;
   });
@@ -237,31 +322,41 @@ function drawHalfLifeCurve(doc: jsPDF, inputs: HalfLifeCurveInput[], startDate: 
   const dates = getDateRange(startDate, endDate);
   if (dates.length === 0) return y;
 
-  const combinedValues = dates.map((date) =>
-    inputs.reduce((total, input) => {
+  const inputValues = inputs.map((input) => ({
+    input,
+    values: dates.map((date) => {
       const halfLifeDays = input.halfLifeHours / 24;
-      if (halfLifeDays <= 0) return total;
-      const value = input.events.reduce((sum, event) => {
+      if (halfLifeDays <= 0) return 0;
+      return input.events.reduce((sum, event) => {
         if (event.date > date) return sum;
         const elapsedDays = daysBetween(event.date, date);
         return sum + event.doseMg * Math.pow(0.5, elapsedDays / halfLifeDays);
       }, 0);
-      return total + value;
-    }, 0)
-  );
+    }),
+  }));
 
-  const maxValue = Math.max(...combinedValues, 0.001);
+  const maxValue = Math.max(...inputValues.flatMap((item) => item.values), 0.001);
   const chartX = margin;
   const chartY = y + 16;
   const pointX = (index: number) => chartX + (dates.length === 1 ? 0 : (index / (dates.length - 1)) * chartWidth);
   const pointY = (value: number) => chartY + chartHeight - (value / maxValue) * chartHeight;
+  const curveColors: Array<[number, number, number]> = [
+    [37, 99, 235],
+    [16, 185, 129],
+    [245, 158, 11],
+    [168, 85, 247],
+    [239, 68, 68],
+    [20, 184, 166],
+    [217, 70, 239],
+    [100, 116, 139],
+  ];
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.text("Estimated Half-Life Curve", margin, y);
+  doc.text("Estimated Individual Half-Life Curves", margin, y);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
-  doc.text(`Combined active amount estimate, ${formatDate(startDate)} - ${formatDate(endDate)}`, margin, y + 6);
+  doc.text(`Individual active amount estimates, ${formatDate(startDate)} - ${formatDate(endDate)}`, margin, y + 6);
 
   doc.setDrawColor(148, 163, 184);
   doc.rect(chartX, chartY, chartWidth, chartHeight);
@@ -271,11 +366,14 @@ function drawHalfLifeCurve(doc: jsPDF, inputs: HalfLifeCurveInput[], startDate: 
     doc.line(chartX, gridY, chartX + chartWidth, gridY);
   }
 
-  doc.setDrawColor(37, 99, 235);
   doc.setLineWidth(0.8);
-  combinedValues.forEach((value, index) => {
-    if (index === 0) return;
-    doc.line(pointX(index - 1), pointY(combinedValues[index - 1]), pointX(index), pointY(value));
+  inputValues.forEach(({ values }, inputIndex) => {
+    const [red, green, blue] = curveColors[inputIndex % curveColors.length];
+    doc.setDrawColor(red, green, blue);
+    values.forEach((value, index) => {
+      if (index === 0) return;
+      doc.line(pointX(index - 1), pointY(values[index - 1]), pointX(index), pointY(value));
+    });
   });
   doc.setLineWidth(0.2);
 
@@ -289,7 +387,19 @@ function drawHalfLifeCurve(doc: jsPDF, inputs: HalfLifeCurveInput[], startDate: 
   const totalEvents = inputs.reduce((sum, input) => sum + input.events.length, 0);
   doc.text(`${inputs.length} item(s), ${totalEvents} dose event(s)`, margin, chartY + chartHeight + 17);
 
-  return chartY + chartHeight + 24;
+  let legendY = chartY + chartHeight + 22;
+  inputs.slice(0, 8).forEach((input, index) => {
+    const [red, green, blue] = curveColors[index % curveColors.length];
+    if (legendY + 4 > pageHeight - margin) return;
+    doc.setFillColor(red, green, blue);
+    doc.rect(margin + (index % 4) * 64, legendY - 3, 3, 3, "F");
+    doc.setTextColor(15, 23, 42);
+    doc.text(doc.splitTextToSize(input.label, 54)[0] || input.label, margin + 5 + (index % 4) * 64, legendY);
+    if (index % 4 === 3) legendY += 5;
+  });
+  doc.setTextColor(15, 23, 42);
+
+  return Math.max(chartY + chartHeight + 28, legendY + 6);
 }
 
 const tableStyle: React.CSSProperties = {
@@ -349,17 +459,34 @@ function ReportTable({ headers, rows }: { headers: string[]; rows: React.ReactNo
   );
 }
 
+function ReportSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section style={{ marginTop: "22px" }}>
+      <h3 style={{ fontSize: "1.05rem", margin: "0 0 10px" }}>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
 export const ExportCenterPage: React.FC = () => {
   const navigate = useNavigate();
   const today = getLocalDateString();
-  const [reportType, setReportType] = useState<ReportType>("stock");
   const [selectedUserId, setSelectedUserId] = useState("all");
   const [startDate, setStartDate] = useState(addDays(today, -30));
   const [endDate, setEndDate] = useState(addDays(today, 30));
   const [selectedPeptideIds, setSelectedPeptideIds] = useState<string[]>([]);
   const [selectedStockIds, setSelectedStockIds] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<LogStatus[]>(["taken", "manual", "skipped", "missed"]);
-  const [selectedBundleReports, setSelectedBundleReports] = useState<ReportType[]>(["stock", "history", "schedule"]);
+  const [selectedReportSections, setSelectedReportSections] = useState<ReportSectionKey[]>([
+    "stockItems",
+    "openVials",
+    "stackSummary",
+    "scheduleSummary",
+    "scheduleByDate",
+    "history",
+    "halfLifeInputs",
+    "halfLifeSummary",
+  ]);
   const [includeInactiveSchedules, setIncludeInactiveSchedules] = useState(false);
 
   useEffect(() => {
@@ -377,7 +504,8 @@ export const ExportCenterPage: React.FC = () => {
   const peptideById = useMemo(() => new Map((peptides || []).map((peptide) => [peptide.id, peptide])), [peptides]);
   const stockById = useMemo(() => new Map((stockItems || []).map((stock) => [stock.id, stock])), [stockItems]);
 
-  const reportInfo = reportOptions.find((option) => option.value === reportType) || reportOptions[0];
+  const isDateRangeValid = Boolean(startDate && endDate && startDate <= endDate);
+  const dateRangeError = isDateRangeValid ? "" : "End date must be on or after start date.";
   const visiblePeptides = (peptides || []).filter((peptide) => selectedUserId === "all" || getUserId(peptide) === selectedUserId);
   const filteredPeptides = visiblePeptides.filter((peptide) => selectedPeptideIds.length === 0 || selectedPeptideIds.includes(peptide.id));
   const filteredPeptideIds = new Set(filteredPeptides.map((peptide) => peptide.id));
@@ -419,8 +547,8 @@ export const ExportCenterPage: React.FC = () => {
     );
   };
 
-  const toggleBundleReport = (value: ReportType) => {
-    setSelectedBundleReports((current) =>
+  const toggleReportSection = (value: ReportSectionKey) => {
+    setSelectedReportSections((current) =>
       current.includes(value) ? current.filter((item) => item !== value) : [...current, value]
     );
   };
@@ -445,7 +573,7 @@ export const ExportCenterPage: React.FC = () => {
     };
   };
 
-  const historyRows = (logs || [])
+  const historyRows = !isDateRangeValid ? [] : (logs || [])
     .filter((log) => {
       const peptide = peptideById.get(log.peptideId);
       const userId = log.vaultUserId || peptide?.vaultUserId || DEFAULT_VAULT_USER_ID;
@@ -476,7 +604,7 @@ export const ExportCenterPage: React.FC = () => {
       return peptideA.localeCompare(peptideB);
     });
 
-  const scheduleDateRows = scheduleRows
+  const scheduleDateRows = !isDateRangeValid ? [] : scheduleRows
     .flatMap((schedule) => {
       const peptide = peptideById.get(schedule.peptideId);
       if (!peptide || !schedule.isActive) return [];
@@ -495,99 +623,92 @@ export const ExportCenterPage: React.FC = () => {
 
   const recentStackLogs = historyRows.filter((log) => filteredPeptideIds.has(log.peptideId)).slice(0, 12);
 
-  const halfLifeRows = scheduleRows
+  const halfLifeRows: HalfLifeReportRow[] = !isDateRangeValid ? [] : scheduleRows
     .filter((schedule) => schedule.isActive)
-    .map((schedule) => {
+    .flatMap((schedule) => {
       const peptide = peptideById.get(schedule.peptideId);
-      if (!peptide) return null;
+      if (!peptide) return [];
       const halfLife = getHalfLife(peptide);
-      if (!halfLife) return null;
       const dates = getUpcomingInjectionDates(schedule, startDate, endDate).slice(0, 8);
-      return { peptide, schedule, halfLife, dates };
-    })
-    .filter((row): row is { peptide: Peptide; schedule: PeptideSchedule; halfLife: { hours: number; source: string }; dates: string[] } =>
-      Boolean(row)
-    );
 
-  const halfLifeCurveInputs: HalfLifeCurveInput[] = halfLifeRows.map(({ peptide, schedule, halfLife }) => {
-    const eventsByDate = new Map<string, { date: string; doseMg: number }>();
-    const futureStartDate = startDate < today ? today : startDate;
+      const blendDefinition = getBlendDefinitionForPeptide(peptide);
 
-    getUpcomingInjectionDates(schedule, futureStartDate, endDate).forEach((date) => {
-      const dose = getScheduledDoseForDate(peptide, schedule, date);
-      eventsByDate.set(date, {
-        date,
-        doseMg: doseToMg(dose.doseValue, dose.doseUnit),
-      });
+      if (blendDefinition) {
+        const totalParts = blendDefinition.components.reduce((sum, component) => sum + component.parts, 0);
+        return blendDefinition.components
+          .map((component) => {
+            const componentCatalog = PEPTIDE_CATALOG.find((item) => item.id === component.peptideCatalogId);
+            if (!componentCatalog?.normalizedHalfLifeHours || totalParts <= 0) return null;
+            return {
+              peptide,
+              schedule,
+              label: `${blendDefinition.displayName} - ${componentCatalog.name}`,
+              halfLife: {
+                hours: componentCatalog.normalizedHalfLifeHours,
+                source: componentCatalog.estimatedHalfLife ? "Catalog estimate" : "Catalog",
+              },
+              dates,
+              doseMultiplier: component.parts / totalParts,
+            };
+          })
+          .filter((row): row is HalfLifeReportRow => Boolean(row));
+      }
+
+      if (!halfLife) return [];
+      return [{ peptide, schedule, label: peptide.name, halfLife, dates, doseMultiplier: 1 }];
     });
 
-    (logs || [])
-      .filter(
-        (log) =>
-          log.peptideId === peptide.id &&
-          log.scheduledDate >= startDate &&
-          log.scheduledDate <= endDate
-      )
-      .forEach((log) => {
-        if (log.status === "skipped" || log.status === "missed") {
-          eventsByDate.delete(log.scheduledDate);
-          return;
-        }
-        if (log.status === "taken" || log.status === "manual") {
-          eventsByDate.set(log.scheduledDate, {
-            date: log.scheduledDate,
-            doseMg: doseToMg(log.doseValue, log.doseUnit),
-          });
-        }
-      });
+  const halfLifeCurveInputs: HalfLifeCurveInput[] = halfLifeRows.map(({ peptide, schedule, label, halfLife, doseMultiplier }) => {
+    const baseEvents = getDoseEventsForRange(peptide, schedule, logs || [], startDate, endDate, today);
 
     return {
-      label: peptide.name,
+      label,
       halfLifeHours: halfLife.hours,
-      events: Array.from(eventsByDate.values()).sort((a, b) => a.date.localeCompare(b.date)),
+      events: baseEvents.map((event) => ({ ...event, doseMg: event.doseMg * doseMultiplier })),
     };
   });
 
-  const renderStockReport = () => (
-    <>
-      <ReportTable
-        headers={["Item", "Amount", "Supplier", "Ordered", "Received", "Manufacturer", "COA", "Storage / Notes"]}
-        rows={filteredStockItems.map((stock: StockItem) => [
-          <>
-            <strong>{stock.name}</strong>
-            <div style={{ color: "var(--text-secondary)" }}>Batch {stock.batchNumber || "--"}</div>
-          </>,
-          `${stock.numberOfVials || "--"} vial(s), ${stock.mgPerVial || "--"} mg/vial`,
-          stock.supplier || "--",
-          formatDate(stock.orderedDate),
-          stock.receivedDate ? formatDate(stock.receivedDate) : "Not received",
-          formatDate(stock.manufacturerDate),
-          stock.coaFileName ? "Attached" : "--",
-          <>
-            <div>{stock.storedLocation || "--"}</div>
-            {stock.notes && <div style={{ color: "var(--text-secondary)" }}>{stock.notes}</div>}
-          </>,
-        ])}
-      />
-      <h3 style={{ marginTop: "20px", fontSize: "1rem" }}>Open Vials</h3>
-      <ReportTable
-        headers={["User", "Peptide", "Vial", "Scheduled Dose", "Draw", "Next Dose", "Vial Opened", "Source"]}
-        rows={filteredPeptides.map((peptide) => {
-          const nextDose = getNextScheduledDoseInfo(peptide);
-          return [
-            userNameById.get(getUserId(peptide)) || "User 1",
-            peptide.name,
-            `${peptide.vialMg} mg / ${peptide.bacWaterMl} mL`,
-            nextDose ? formatDose(nextDose.dose.doseValue, nextDose.dose.doseUnit) : "No active schedule",
-            nextDose ? `${formatMl(nextDose.draw.drawMl)} / ${formatUnits(nextDose.draw.drawUnits)}` : "--",
-            nextDose ? formatDate(nextDose.nextDate) : "--",
-            peptide.currentVialStartedAt ? formatDate(peptide.currentVialStartedAt.slice(0, 10)) : "Not recorded",
-            getStockSourceLabel(peptide),
-          ];
-        })}
-      />
-    </>
-  );
+  const halfLifeExcludedRows = scheduleRows
+    .filter((schedule) => schedule.isActive)
+    .flatMap((schedule) => {
+      const peptide = peptideById.get(schedule.peptideId);
+      if (!peptide) return [];
+      const blendDefinition = getBlendDefinitionForPeptide(peptide);
+      const user = userNameById.get(schedule.vaultUserId || peptide.vaultUserId || DEFAULT_VAULT_USER_ID) || "User 1";
+
+      if (blendDefinition) {
+        const totalParts = blendDefinition.components.reduce((sum, component) => sum + component.parts, 0);
+        if (totalParts <= 0) {
+          return {
+            user,
+            peptide: blendDefinition.displayName,
+            reason: "Blend component ratios are not usable",
+          };
+        }
+
+        return blendDefinition.components.flatMap((component) => {
+          const componentCatalog = PEPTIDE_CATALOG.find((item) => item.id === component.peptideCatalogId);
+          if (componentCatalog?.normalizedHalfLifeHours) return [];
+          return {
+            user,
+            peptide: `${blendDefinition.displayName} - ${componentCatalog?.name || component.peptideCatalogId}`,
+            reason: "Blend component has no catalog half-life available",
+          };
+        });
+      }
+
+      if (getHalfLife(peptide)) return [];
+      return {
+        user,
+        peptide: peptide.name,
+        reason: "No saved or catalog half-life available",
+      };
+    });
+
+  const selectedSectionLabels = selectedReportSections
+    .map((section) => reportSectionOptions.find((option) => option.value === section)?.label)
+    .filter((label): label is string => Boolean(label));
+  const canExportReport = isLoaded && isDateRangeValid && selectedReportSections.length > 0;
 
   const renderHistoryReport = () => (
     <ReportTable
@@ -610,39 +731,6 @@ export const ExportCenterPage: React.FC = () => {
         ];
       })}
     />
-  );
-
-  const renderScheduleReport = () => (
-    <>
-      <ReportTable
-        headers={["User", "Peptide", "Status", "Pattern", "Next Dates", "Dose"]}
-        rows={scheduleRows.map((schedule) => {
-          const peptide = peptideById.get(schedule.peptideId);
-          const dates = schedule.isActive ? getUpcomingInjectionDates(schedule, startDate, endDate).slice(0, 8) : [];
-          const firstDoseDate = dates[0] || startDate;
-          const dose = peptide ? getScheduledDoseForDate(peptide, schedule, firstDoseDate) : null;
-          return [
-            userNameById.get(schedule.vaultUserId || peptide?.vaultUserId || DEFAULT_VAULT_USER_ID) || "User 1",
-            peptide?.name || "--",
-            schedule.isActive ? "Active" : "Inactive",
-            scheduleLabel(schedule),
-            dates.length ? dates.map(formatDate).join(", ") : "--",
-            dose ? formatDose(dose.doseValue, dose.doseUnit) : "--",
-          ];
-        })}
-      />
-      <h3 style={{ marginTop: "20px", fontSize: "1rem" }}>Schedule By Date</h3>
-      <ReportTable
-        headers={["Date", "User", "Peptide", "Dose", "Pattern"]}
-        rows={scheduleDateRows.map((row) => [
-          formatDate(row.date),
-          row.user,
-          row.peptide,
-          row.dose,
-          row.pattern,
-        ])}
-      />
-    </>
   );
 
   const renderStackReport = () => (
@@ -676,37 +764,13 @@ export const ExportCenterPage: React.FC = () => {
     </>
   );
 
-  const renderHalfLifeReport = () => (
-    <>
-      <ReportTable
-        headers={["User", "Peptide", "Half-Life", "Schedule", "Dose Events In Range"]}
-        rows={halfLifeRows.map(({ peptide, schedule, halfLife, dates }) => [
-          userNameById.get(schedule.vaultUserId || peptide.vaultUserId || DEFAULT_VAULT_USER_ID) || "User 1",
-          peptide.name,
-          `${(halfLife.hours / 24).toFixed(2)} days (${Math.round(halfLife.hours)} hours) - ${halfLife.source}`,
-          scheduleLabel(schedule),
-          dates.length ? dates.map(formatDate).join(", ") : "--",
-        ])}
-      />
-      <h3 style={{ marginTop: "20px", fontSize: "1rem" }}>Half-Life Curve Summary</h3>
-      <ReportTable
-        headers={["Item", "Half-Life", "Dose Events", "Total Scheduled"]}
-        rows={halfLifeCurveInputs.map((input) => [
-          input.label,
-          `${(input.halfLifeHours / 24).toFixed(2)} days`,
-          `${input.events.length}`,
-          formatMgAmount(input.events.reduce((sum, event) => sum + event.doseMg, 0)),
-        ])}
-      />
-    </>
-  );
-
-  const getPdfSections = (type: ReportType): PdfTableSection[] => {
-    if (type === "stock") {
+  const getPdfSections = (sectionKey: ReportSectionKey): PdfTableSection[] => {
+    if (sectionKey === "stockItems") {
       return [
         {
           title: "Vault Stock Items",
           headers: ["Item", "Amount", "Supplier", "Ordered", "Received", "Manufacturer", "COA", "Storage / Notes"],
+          columnWeights: [1.6, 1, 1, 0.9, 0.9, 0.9, 0.7, 2],
           rows: filteredStockItems.map((stock) => [
             `${stock.name}\nBatch ${stock.batchNumber || "--"}`,
             `${stock.numberOfVials || "--"} vial(s), ${stock.mgPerVial || "--"} mg/vial`,
@@ -718,9 +782,15 @@ export const ExportCenterPage: React.FC = () => {
             [stock.storedLocation || "--", stock.notes || ""].filter(Boolean).join("\n"),
           ]),
         },
+      ];
+    }
+
+    if (sectionKey === "openVials") {
+      return [
         {
           title: "Open Vials",
           headers: ["User", "Peptide", "Vial", "Scheduled Dose", "Draw", "Next Dose", "Vial Opened", "Source"],
+          columnWeights: [0.9, 1.4, 1, 1, 1, 0.9, 0.9, 1.4],
           rows: filteredPeptides.map((peptide) => {
             const nextDose = getNextScheduledDoseInfo(peptide);
             return [
@@ -738,10 +808,12 @@ export const ExportCenterPage: React.FC = () => {
       ];
     }
 
-    if (type === "history") {
+    if (sectionKey === "history") {
       return [
         {
+          title: "Injection History",
           headers: ["User", "Date", "Peptide", "Dose", "Draw", "Status", "Site", "Notes"],
+          columnWeights: [0.9, 1.1, 1.4, 0.8, 0.9, 0.7, 1.1, 2.1],
           rows: historyRows.map((log) => {
             const peptide = peptideById.get(log.peptideId);
             const userId = log.vaultUserId || peptide?.vaultUserId || DEFAULT_VAULT_USER_ID;
@@ -760,11 +832,12 @@ export const ExportCenterPage: React.FC = () => {
       ];
     }
 
-    if (type === "schedule") {
+    if (sectionKey === "scheduleSummary") {
       return [
         {
           title: "Schedule Summary",
           headers: ["User", "Peptide", "Status", "Pattern", "Next Dates", "Dose"],
+          columnWeights: [0.9, 1.4, 0.7, 1.2, 2.3, 0.9],
           rows: scheduleRows.map((schedule) => {
             const peptide = peptideById.get(schedule.peptideId);
             const dates = schedule.isActive ? getUpcomingInjectionDates(schedule, startDate, endDate).slice(0, 8) : [];
@@ -780,9 +853,15 @@ export const ExportCenterPage: React.FC = () => {
             ];
           }),
         },
+      ];
+    }
+
+    if (sectionKey === "scheduleByDate") {
+      return [
         {
           title: "Schedule By Date",
           headers: ["Date", "User", "Peptide", "Dose", "Pattern"],
+          columnWeights: [0.9, 0.9, 1.5, 0.9, 1.8],
           rows: scheduleDateRows.map((row) => [
             formatDate(row.date),
             row.user,
@@ -794,11 +873,12 @@ export const ExportCenterPage: React.FC = () => {
       ];
     }
 
-    if (type === "stack") {
+    if (sectionKey === "stackSummary") {
       return [
         {
           title: "Selected Stack Items",
           headers: ["User", "Peptide", "Current Vial", "Schedule", "Stock Source", "Recent Status"],
+          columnWeights: [0.9, 1.5, 1, 1.8, 1.4, 1.1],
           rows: filteredPeptides.map((peptide) => {
             const schedule = scheduleRows.find((item) => item.peptideId === peptide.id);
             const recentLog = historyRows.find((log) => log.peptideId === peptide.id);
@@ -815,6 +895,7 @@ export const ExportCenterPage: React.FC = () => {
         {
           title: "Recent Injection History",
           headers: ["Date", "Peptide", "Dose", "Status", "Site"],
+          columnWeights: [0.9, 1.8, 0.9, 0.8, 1.5],
           rows: recentStackLogs.map((log) => [
             formatDate(log.scheduledDate),
             log.peptideNameSnapshot,
@@ -826,29 +907,40 @@ export const ExportCenterPage: React.FC = () => {
       ];
     }
 
-    return [
-      {
-        title: "Half-Life Stack Inputs",
-        headers: ["User", "Peptide", "Half-Life", "Schedule", "Dose Events In Range"],
-        rows: halfLifeRows.map(({ peptide, schedule, halfLife, dates }) => [
-          userNameById.get(schedule.vaultUserId || peptide.vaultUserId || DEFAULT_VAULT_USER_ID) || "User 1",
-          peptide.name,
-          `${(halfLife.hours / 24).toFixed(2)} days (${Math.round(halfLife.hours)} hours) - ${halfLife.source}`,
-          scheduleLabel(schedule),
-          dates.length ? dates.map(formatDate).join(", ") : "--",
-        ]),
-      },
-      {
-        title: "Half-Life Curve Summary",
-        headers: ["Item", "Half-Life", "Dose Events", "Total Scheduled"],
-        rows: halfLifeCurveInputs.map((input) => [
-          input.label,
-          `${(input.halfLifeHours / 24).toFixed(2)} days`,
-          `${input.events.length}`,
-          formatMgAmount(input.events.reduce((sum, event) => sum + event.doseMg, 0)),
-        ]),
-      },
-    ];
+    if (sectionKey === "halfLifeInputs") {
+      return [
+        {
+          title: "Half-Life Stack Inputs",
+          headers: ["User", "Peptide", "Half-Life", "Schedule", "Dose Events In Range"],
+          columnWeights: [0.9, 1.7, 1.4, 1.1, 2.4],
+          rows: halfLifeRows.map(({ peptide, schedule, label, halfLife, dates }) => [
+            userNameById.get(schedule.vaultUserId || peptide.vaultUserId || DEFAULT_VAULT_USER_ID) || "User 1",
+            label,
+            `${(halfLife.hours / 24).toFixed(2)} days (${Math.round(halfLife.hours)} hours) - ${halfLife.source}`,
+            scheduleLabel(schedule),
+            dates.length ? dates.map(formatDate).join(", ") : "--",
+          ]),
+        },
+      ];
+    }
+
+    if (sectionKey === "halfLifeSummary") {
+      return [
+        {
+          title: "Half-Life Curve Summary",
+          headers: ["Item", "Half-Life", "Dose Events", "Total Scheduled"],
+          columnWeights: [2, 1, 0.9, 1.1],
+          rows: halfLifeCurveInputs.map((input) => [
+            input.label,
+            `${(input.halfLifeHours / 24).toFixed(2)} days`,
+            `${input.events.length}`,
+            formatMgAmount(input.events.reduce((sum, event) => sum + event.doseMg, 0)),
+          ]),
+        },
+      ];
+    }
+
+    return [];
   };
 
   const addPdfPageNumbers = (doc: jsPDF) => {
@@ -856,68 +948,235 @@ export const ExportCenterPage: React.FC = () => {
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 14;
     const pageCount = doc.getNumberOfPages();
-    for (let page = 1; page <= pageCount; page += 1) {
+    const contentPageCount = Math.max(0, pageCount - 1);
+    for (let page = 2; page <= pageCount; page += 1) {
       doc.setPage(page);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
-      doc.text(`Page ${page} of ${pageCount}`, pageWidth - margin, pageHeight - 8, { align: "right" });
+      doc.text(`Page ${page - 1} of ${contentPageCount}`, pageWidth - margin, pageHeight - 8, { align: "right" });
     }
   };
 
-  const drawReportIntoPdf = (doc: jsPDF, type: ReportType, startOnNewPage: boolean) => {
+  const drawCoverPage = (doc: jsPDF) => {
     const pageWidth = doc.internal.pageSize.getWidth();
     const margin = 14;
     const generatedAt = new Date().toLocaleString();
-    const option = reportOptions.find((item) => item.value === type) || reportOptions[0];
     const userScope = selectedUserId === "all" ? "All users" : userNameById.get(selectedUserId) || "Selected user";
-    const dateScope = type === "stock" ? "" : `${formatDate(startDate)} - ${formatDate(endDate)}`;
-
-    if (startOnNewPage) doc.addPage();
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text(`${option.label} Report`, margin, 16);
+    doc.setFontSize(20);
+    doc.text("Compiled Export Report", margin, 20);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(`Generated ${generatedAt}`, margin, 23);
-    doc.text(userScope, pageWidth - margin, 16, { align: "right" });
-    if (dateScope) doc.text(dateScope, pageWidth - margin, 23, { align: "right" });
+    doc.text(`Generated ${generatedAt}`, margin, 29);
+    doc.text(userScope, pageWidth - margin, 20, { align: "right" });
+    doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, pageWidth - margin, 29, { align: "right" });
 
-    let y = 34;
-    getPdfSections(type).forEach((section) => {
+    drawPdfTable(
+      doc,
+      {
+        title: "Report Summary",
+        headers: ["Scope", "Value"],
+        columnWeights: [1, 3],
+        rows: [
+          ["User Scope", userScope],
+          ["Date Range", `${formatDate(startDate)} - ${formatDate(endDate)}`],
+          ["Included Sections", selectedSectionLabels.join(", ") || "--"],
+          ["Peptide Items", `${filteredPeptides.length}`],
+          ["Stock Items", `${filteredStockItems.length}`],
+          ["History Logs", `${historyRows.length}`],
+          ["Schedule Dates", `${scheduleDateRows.length}`],
+        ],
+      },
+      44
+    );
+  };
+
+  const drawReportSectionIntoPdf = (doc: jsPDF, sectionKey: ReportSectionKey, startOnNewPage: boolean) => {
+    if (startOnNewPage) doc.addPage();
+    let y = 18;
+    getPdfSections(sectionKey).forEach((section) => {
       y = drawPdfTable(doc, section, y);
     });
-    if (type === "halfLife") {
+    if (sectionKey === "halfLifeSummary") {
       y = drawHalfLifeCurve(doc, halfLifeCurveInputs, startDate, endDate, y);
     }
   };
 
   const handleDownloadPdf = () => {
+    if (!canExportReport) return;
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" });
-    drawReportIntoPdf(doc, reportType, false);
+    drawCoverPage(doc);
+    selectedReportSections.forEach((sectionKey) => {
+      drawReportSectionIntoPdf(doc, sectionKey, true);
+    });
+    if (
+      selectedReportSections.some((section) => section === "halfLifeInputs" || section === "halfLifeSummary") &&
+      halfLifeExcludedRows.length > 0
+    ) {
+      doc.addPage();
+      drawPdfTable(
+        doc,
+        {
+          title: "Half-Life Items Not Included",
+          headers: ["User", "Peptide", "Reason"],
+          columnWeights: [0.9, 1.6, 2.5],
+          rows: halfLifeExcludedRows.map((row) => [row.user, row.peptide, row.reason]),
+        },
+        18
+      );
+    }
     addPdfPageNumbers(doc);
-    doc.save(makeFileName(reportInfo.label));
+    doc.save(makeFileName("Compiled Report"));
   };
 
-  const handleDownloadBundlePdf = () => {
-    if (selectedBundleReports.length === 0) return;
-    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" });
-    selectedBundleReports.forEach((type, index) => {
-      drawReportIntoPdf(doc, type, index > 0);
-    });
-    addPdfPageNumbers(doc);
-    doc.save(makeFileName("Selected Reports"));
+  const renderExcludedHalfLifeItems = () => {
+    if (!selectedReportSections.some((section) => section === "halfLifeInputs" || section === "halfLifeSummary")) return null;
+    if (halfLifeExcludedRows.length === 0) return null;
+
+    return (
+      <div style={{ marginTop: "18px" }}>
+        <h3 style={{ fontSize: "1rem", marginBottom: "8px" }}>Half-Life Items Not Included</h3>
+        <ReportTable
+          headers={["User", "Peptide", "Reason"]}
+          rows={halfLifeExcludedRows.map((row) => [row.user, row.peptide, row.reason])}
+        />
+      </div>
+    );
+  };
+
+  const renderReportSection = (sectionKey: ReportSectionKey) => {
+    if (sectionKey === "stockItems") {
+      return (
+        <ReportSection title="Vault Stock">
+          <ReportTable
+            headers={["Item", "Amount", "Supplier", "Ordered", "Received", "Manufacturer", "COA", "Storage / Notes"]}
+            rows={filteredStockItems.map((stock: StockItem) => [
+              <>
+                <strong>{stock.name}</strong>
+                <div style={{ color: "var(--text-secondary)" }}>Batch {stock.batchNumber || "--"}</div>
+              </>,
+              `${stock.numberOfVials || "--"} vial(s), ${stock.mgPerVial || "--"} mg/vial`,
+              stock.supplier || "--",
+              formatDate(stock.orderedDate),
+              stock.receivedDate ? formatDate(stock.receivedDate) : "Not received",
+              formatDate(stock.manufacturerDate),
+              stock.coaFileName ? "Attached" : "--",
+              <>
+                <div>{stock.storedLocation || "--"}</div>
+                {stock.notes && <div style={{ color: "var(--text-secondary)" }}>{stock.notes}</div>}
+              </>,
+            ])}
+          />
+        </ReportSection>
+      );
+    }
+    if (sectionKey === "openVials") {
+      return (
+        <ReportSection title="Open Vials">
+          <ReportTable
+            headers={["User", "Peptide", "Vial", "Scheduled Dose", "Draw", "Next Dose", "Vial Opened", "Source"]}
+            rows={filteredPeptides.map((peptide) => {
+              const nextDose = getNextScheduledDoseInfo(peptide);
+              return [
+                userNameById.get(getUserId(peptide)) || "User 1",
+                peptide.name,
+                `${peptide.vialMg} mg / ${peptide.bacWaterMl} mL`,
+                nextDose ? formatDose(nextDose.dose.doseValue, nextDose.dose.doseUnit) : "No active schedule",
+                nextDose ? `${formatMl(nextDose.draw.drawMl)} / ${formatUnits(nextDose.draw.drawUnits)}` : "--",
+                nextDose ? formatDate(nextDose.nextDate) : "--",
+                peptide.currentVialStartedAt ? formatDate(peptide.currentVialStartedAt.slice(0, 10)) : "Not recorded",
+                getStockSourceLabel(peptide),
+              ];
+            })}
+          />
+        </ReportSection>
+      );
+    }
+    if (sectionKey === "stackSummary") return <ReportSection title="Stack Summary">{renderStackReport()}</ReportSection>;
+    if (sectionKey === "scheduleSummary") {
+      return (
+        <ReportSection title="Schedule Summary">
+          <ReportTable
+            headers={["User", "Peptide", "Status", "Pattern", "Next Dates", "Dose"]}
+            rows={scheduleRows.map((schedule) => {
+              const peptide = peptideById.get(schedule.peptideId);
+              const dates = schedule.isActive ? getUpcomingInjectionDates(schedule, startDate, endDate).slice(0, 8) : [];
+              const firstDoseDate = dates[0] || startDate;
+              const dose = peptide ? getScheduledDoseForDate(peptide, schedule, firstDoseDate) : null;
+              return [
+                userNameById.get(schedule.vaultUserId || peptide?.vaultUserId || DEFAULT_VAULT_USER_ID) || "User 1",
+                peptide?.name || "--",
+                schedule.isActive ? "Active" : "Inactive",
+                scheduleLabel(schedule),
+                dates.length ? dates.map(formatDate).join(", ") : "--",
+                dose ? formatDose(dose.doseValue, dose.doseUnit) : "--",
+              ];
+            })}
+          />
+        </ReportSection>
+      );
+    }
+    if (sectionKey === "scheduleByDate") {
+      return (
+        <ReportSection title="Schedule By Date">
+          <ReportTable
+            headers={["Date", "User", "Peptide", "Dose", "Pattern"]}
+            rows={scheduleDateRows.map((row) => [formatDate(row.date), row.user, row.peptide, row.dose, row.pattern])}
+          />
+        </ReportSection>
+      );
+    }
+    if (sectionKey === "history") return <ReportSection title="Injection History">{renderHistoryReport()}</ReportSection>;
+    if (sectionKey === "halfLifeInputs") {
+      return (
+        <ReportSection title="Half-Life Inputs">
+          <ReportTable
+            headers={["User", "Peptide", "Half-Life", "Schedule", "Dose Events In Range"]}
+            rows={halfLifeRows.map(({ peptide, schedule, label, halfLife, dates }) => [
+              userNameById.get(schedule.vaultUserId || peptide.vaultUserId || DEFAULT_VAULT_USER_ID) || "User 1",
+              label,
+              `${(halfLife.hours / 24).toFixed(2)} days (${Math.round(halfLife.hours)} hours) - ${halfLife.source}`,
+              scheduleLabel(schedule),
+              dates.length ? dates.map(formatDate).join(", ") : "--",
+            ])}
+          />
+        </ReportSection>
+      );
+    }
+    return (
+      <ReportSection title="Half-Life Curves">
+        <ReportTable
+          headers={["Item", "Half-Life", "Dose Events", "Total Scheduled"]}
+          rows={halfLifeCurveInputs.map((input) => [
+            input.label,
+            `${(input.halfLifeHours / 24).toFixed(2)} days`,
+            `${input.events.length}`,
+            formatMgAmount(input.events.reduce((sum, event) => sum + event.doseMg, 0)),
+          ])}
+        />
+      </ReportSection>
+    );
   };
 
   const renderReport = () => {
     if (!isLoaded) {
       return <p style={{ color: "var(--text-secondary)" }}>Loading report data...</p>;
     }
-    if (reportType === "stock") return renderStockReport();
-    if (reportType === "history") return renderHistoryReport();
-    if (reportType === "schedule") return renderScheduleReport();
-    if (reportType === "stack") return renderStackReport();
-    return renderHalfLifeReport();
+    if (!isDateRangeValid) {
+      return <p style={{ color: "var(--color-warning)", fontWeight: 700 }}>{dateRangeError}</p>;
+    }
+    if (selectedReportSections.length === 0) {
+      return <p style={{ color: "var(--text-secondary)" }}>Select at least one report section.</p>;
+    }
+    return (
+      <>
+        {selectedReportSections.map((sectionKey) => (
+          <React.Fragment key={sectionKey}>{renderReportSection(sectionKey)}</React.Fragment>
+        ))}
+        {renderExcludedHalfLifeItems()}
+      </>
+    );
   };
 
   return (
@@ -937,16 +1196,6 @@ export const ExportCenterPage: React.FC = () => {
 
       <Card className="no-print" style={{ marginBottom: "18px" }}>
         <div style={{ display: "grid", gap: "14px" }}>
-          <Select
-            label="Report"
-            value={reportType}
-            onChange={(event) => setReportType(event.target.value as ReportType)}
-            options={reportOptions.map((option) => ({ value: option.value, label: option.label }))}
-          />
-          <p style={{ color: "var(--text-secondary)", fontSize: "0.84rem", margin: "-8px 0 0", lineHeight: 1.45 }}>
-            {reportInfo.description}
-          </p>
-
           <div className="form-row-grid">
             <Select label="User Scope" value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)} options={selectOptions} />
             <label style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--text-secondary)", fontSize: "0.86rem", paddingTop: "24px" }}>
@@ -959,16 +1208,47 @@ export const ExportCenterPage: React.FC = () => {
             </label>
           </div>
 
-          {reportType !== "stock" && (
-            <div className="form-row-grid">
-              <Input label="Start Date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-              <Input label="End Date" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-            </div>
-          )}
+          <div className="form-row-grid">
+            <Input label="Start Date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            <Input
+              label="End Date"
+              type="date"
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              error={dateRangeError || undefined}
+            />
+          </div>
 
-          {reportType === "history" && (
+          <div
+            style={{
+              border: "1px solid var(--border-color)",
+              borderRadius: "var(--border-radius-sm)",
+              padding: "12px",
+              background: "var(--bg-input)",
+            }}
+          >
+            <span className="form-label">Report Sections</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "8px", marginTop: "10px" }}>
+              {reportSectionOptions.map((option) => (
+                <label key={option.value} style={{ display: "flex", alignItems: "flex-start", gap: "8px", color: "var(--text-secondary)", fontSize: "0.86rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedReportSections.includes(option.value)}
+                    onChange={() => toggleReportSection(option.value)}
+                    style={{ marginTop: "3px" }}
+                  />
+                  <span>
+                    <strong style={{ color: "var(--text-primary)" }}>{option.label}</strong>
+                    <span style={{ display: "block", fontSize: "0.76rem", lineHeight: 1.35 }}>{option.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {selectedReportSections.includes("history") && (
             <div>
-              <span className="form-label">Statuses</span>
+              <span className="form-label">History Statuses</span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px" }}>
                 {historyLogStatuses.map((status) => (
                   <button
@@ -986,7 +1266,7 @@ export const ExportCenterPage: React.FC = () => {
             </div>
           )}
 
-          {reportType === "stock" ? (
+          {selectedReportSections.includes("stockItems") ? (
             <div>
               <span className="form-label">Vault Stock Items</span>
               <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
@@ -998,7 +1278,9 @@ export const ExportCenterPage: React.FC = () => {
                 ))}
               </div>
             </div>
-          ) : (
+          ) : null}
+
+          {selectedReportSections.some((section) => section !== "stockItems") && (
             <div>
               <span className="form-label">Peptides / Stack Items</span>
               <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
@@ -1016,37 +1298,10 @@ export const ExportCenterPage: React.FC = () => {
             </div>
           )}
 
-          <div
-            style={{
-              border: "1px solid var(--border-color)",
-              borderRadius: "var(--border-radius-sm)",
-              padding: "12px",
-              background: "var(--bg-input)",
-            }}
-          >
-            <span className="form-label">Report Bundle</span>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "8px", marginTop: "10px" }}>
-              {reportOptions.map((option) => (
-                <label key={option.value} style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--text-secondary)", fontSize: "0.86rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedBundleReports.includes(option.value)}
-                    onChange={() => toggleBundleReport(option.value)}
-                  />
-                  {option.label}
-                </label>
-              ))}
-            </div>
-          </div>
-
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px" }}>
-            <Button variant="primary" onClick={handleDownloadPdf} disabled={!isLoaded}>
+            <Button variant="primary" onClick={handleDownloadPdf} disabled={!canExportReport}>
               <Download size={16} />
               Download PDF
-            </Button>
-            <Button variant="secondary" onClick={handleDownloadBundlePdf} disabled={!isLoaded || selectedBundleReports.length === 0}>
-              <Download size={16} />
-              Download Selected
             </Button>
             <Button variant="secondary" onClick={() => window.print()}>
               <Printer size={16} />
@@ -1058,6 +1313,7 @@ export const ExportCenterPage: React.FC = () => {
                 setSelectedPeptideIds([]);
                 setSelectedStockIds([]);
                 setSelectedStatuses(["taken", "manual", "skipped", "missed"]);
+                setSelectedReportSections(reportSectionOptions.map((option) => option.value));
               }}
             >
               Clear Filters
@@ -1071,7 +1327,7 @@ export const ExportCenterPage: React.FC = () => {
           <div>
             <h2 style={{ fontSize: "1.3rem", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
               <FileText size={20} style={{ color: "var(--color-primary)" }} />
-              {reportInfo.label} Report
+              Compiled Report
             </h2>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.84rem", margin: "6px 0 0" }}>
               Generated {new Date().toLocaleString()}
@@ -1079,12 +1335,37 @@ export const ExportCenterPage: React.FC = () => {
           </div>
           <div style={{ textAlign: "right", color: "var(--text-secondary)", fontSize: "0.82rem" }}>
             <div>{selectedUserId === "all" ? "All users" : userNameById.get(selectedUserId) || "Selected user"}</div>
-            {reportType !== "stock" && (
-              <div>
-                {formatDate(startDate)} - {formatDate(endDate)}
-              </div>
-            )}
+            <div>
+              {formatDate(startDate)} - {formatDate(endDate)}
+            </div>
           </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+            gap: "10px",
+            marginBottom: "16px",
+            padding: "12px",
+            border: "1px solid var(--border-color)",
+            borderRadius: "var(--border-radius-sm)",
+            background: "rgba(255,255,255,0.02)",
+          }}
+        >
+          {[
+            ["Sections", `${selectedReportSections.length}`],
+            ["Peptides", `${filteredPeptides.length}`],
+            ["Stock Items", `${filteredStockItems.length}`],
+            ["History Logs", `${historyRows.length}`],
+            ["Schedule Dates", `${scheduleDateRows.length}`],
+            ["Half-Life Items", `${halfLifeRows.length}`],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase" }}>{label}</div>
+              <div style={{ fontWeight: 800, marginTop: "3px" }}>{value}</div>
+            </div>
+          ))}
         </div>
 
         {renderReport()}
