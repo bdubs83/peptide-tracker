@@ -16,8 +16,8 @@ export const BLEND_DEFINITIONS: BlendDefinition[] = [
   {
     id: "klow-80",
     displayName: "KLOW",
-    blendCatalogIds: ["klow-kk-10-protocol"],
-    matchNames: ["KLOW 80", "KLOW", "K-L-O-W stack", "KLOW / KK-10 Protocol"],
+    blendCatalogIds: ["klow"],
+    matchNames: ["KLOW 80", "KLOW", "K-L-O-W stack"],
     matchPrefixes: ["KLOW"],
     components: [
       { peptideCatalogId: "ghk-cu", parts: 5 },

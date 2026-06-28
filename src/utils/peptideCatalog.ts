@@ -1300,12 +1300,11 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     ]
   },
   {
-    "id": "klow-kk-10-protocol",
+    "id": "klow",
     "name": "KLOW",
     "originalProduct": "KLOW",
     "alternateNames": [
       "KLOW",
-      "KLOW / KK-10 Protocol",
       "K-L-O-W stack",
       "KPV + GHK-Cu + BPC-157 + TB-500",
       "sometimes listed with LL-37"

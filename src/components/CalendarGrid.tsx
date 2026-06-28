@@ -47,26 +47,13 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
+    <div className="calendar-grid">
       {/* Weekdays Header */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          textAlign: "center",
-          marginBottom: "8px",
-        }}
-      >
+      <div className="calendar-weekday-row">
         {weekdays.map((day) => (
           <span
             key={day}
-            style={{
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              color: "var(--text-muted)",
-              textTransform: "uppercase",
-              padding: "4px 0",
-            }}
+            className="calendar-weekday-label"
           >
             {day}
           </span>
@@ -74,32 +61,27 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
       </div>
 
       {/* Grid Cells */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: "6px",
-        }}
-      >
+      <div className="calendar-day-grid">
         {days.map((day) => {
           const events = getDayEvents(day.dateStr);
           const isSelected = selectedDate === day.dateStr;
-          const userEvents = Array.from(
-            new Map(events.map((event) => [event.peptide.vaultUserId || DEFAULT_VAULT_USER_ID, event])).values()
+          const groupedUserEvents = Array.from(
+            events.reduce((map, event) => {
+              const userId = event.peptide.vaultUserId || DEFAULT_VAULT_USER_ID;
+              const group = map.get(userId) || [];
+              group.push(event);
+              map.set(userId, group);
+              return map;
+            }, new Map<string, DayEvent[]>())
           ).slice(0, 3);
+          const visibleEventCount = groupedUserEvents.reduce((count, [, userEvents]) => count + userEvents.length, 0);
 
           return (
             <div
               key={day.dateStr}
+              className="calendar-day-cell"
               onClick={() => onDayClick(day)}
               style={{
-                aspectRatio: "1",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "6px 2px",
-                borderRadius: "var(--border-radius-sm)",
                 background: isSelected
                   ? "rgba(99, 102, 241, 0.15)"
                   : day.isCurrentMonth
@@ -112,9 +94,6 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                   ? "rgba(99, 102, 241, 0.4)"
                   : "var(--border-color)",
                 opacity: day.isCurrentMonth ? 1 : 0.4,
-                cursor: "pointer",
-                position: "relative",
-                transition: "all var(--transition-fast)",
               }}
             >
               {/* Day Number */}
@@ -134,34 +113,27 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
 
               {/* User indicators */}
               <div
-                style={{
-                  display: "grid",
-                  gap: "2px",
-                  width: "100%",
-                  minHeight: "24px",
-                }}
+                className="calendar-user-indicators"
               >
-                {userEvents.map((event) => (
-                  <span
-                    key={event.peptide.vaultUserId || DEFAULT_VAULT_USER_ID}
-                    style={{
-                      minHeight: "10px",
-                      borderRadius: "4px",
-                      borderLeft: `3px solid ${getUserColor(event.peptide.vaultUserId)}`,
-                      backgroundColor: getStatusDotColor(event.status),
-                      color: "#ffffff",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "0.48rem",
-                      fontWeight: 900,
-                      lineHeight: 1,
-                    }}
-                  >
-                    {getUserLabel(event.peptide.vaultUserId)}
-                  </span>
+                {groupedUserEvents.map(([userId, userEvents]) => (
+                  <div key={userId} className="calendar-user-dot-group">
+                    <span className="calendar-user-label" style={{ color: getUserColor(userId) }}>
+                      {getUserLabel(userId)}
+                    </span>
+                    <span className="calendar-user-dot-row">
+                      {userEvents.slice(0, 5).map((event, index) => (
+                        <span
+                          key={`${event.peptide.id}-${index}`}
+                          className="calendar-user-dot"
+                          style={{ backgroundColor: getStatusDotColor(event.status) }}
+                          title={event.peptide.name}
+                        />
+                      ))}
+                      {userEvents.length > 5 && <span className="calendar-more-dot">+</span>}
+                    </span>
+                  </div>
                 ))}
-                {events.length > userEvents.length && (
+                {events.length > visibleEventCount && (
                   <span
                     style={{
                       fontSize: "0.55rem",

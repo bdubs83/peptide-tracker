@@ -8,7 +8,6 @@ type ShellProps = {
   children: React.ReactNode;
   copied: boolean;
   onCopyLink: () => void;
-  onOpenDisclaimer: () => void;
 };
 
 const BrandHeader: React.FC<

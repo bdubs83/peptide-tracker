@@ -22,6 +22,8 @@ import {
 import { formatMl, formatUnits, formatDose } from "../../utils/formatting";
 import { calculateReconstitution, normalizeDoseToMcg } from "../calculator/calculatorUtils";
 import { PRELOADED_PEPTIDES } from "../../utils/peptideList";
+import { makePreferredScheduleMap } from "../../utils/scheduleUtils";
+import { isAvailableStock, hasUsableVialCount, isReceivedStock } from "../../utils/stockUtils";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -80,10 +82,7 @@ export const VaultPage: React.FC = () => {
   const schedules = useLiveQuery(() => db.schedules.toArray());
   const logs = useLiveQuery(() => db.injectionLogs.toArray());
   const stockItems = useLiveQuery(() => db.stockItems.orderBy("createdAt").reverse().toArray());
-  const vaultUsers = useLiveQuery(async () => {
-    await ensureDefaultVaultUser();
-    return db.vaultUsers.orderBy("sortOrder").toArray();
-  });
+  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
   const settings = useLiveQuery(() => db.appSettings.toArray());
   const syringeDisplayMode = settings?.find((item) => item.key === "pref_displayMode")?.value === "mL" ? "mL" : "units";
 
@@ -155,6 +154,11 @@ export const VaultPage: React.FC = () => {
   };
 
   const handleOpenVialFromStock = (item: StockItem) => {
+    if (!isAvailableStock(item, today)) {
+      alert("This stock item is not available to open yet.");
+      return;
+    }
+
     const peptideMg = item.mgPerVial ? Number(item.mgPerVial) : undefined;
 
     navigate("/vault/add", {
@@ -243,6 +247,11 @@ export const VaultPage: React.FC = () => {
     const stockItem = refillRequest.stockOptions.find((item) => item.id === selectedRefillStockId);
     if (!stockItem) return;
 
+    if (!isAvailableStock(stockItem, today)) {
+      alert("This stock item is not available to pull yet.");
+      return;
+    }
+
     const mgPerVial = stockItem.mgPerVial ? Number(stockItem.mgPerVial) : NaN;
     const vialCount = stockItem.numberOfVials ? Number(stockItem.numberOfVials) : NaN;
     if (!Number.isFinite(mgPerVial) || mgPerVial <= 0 || !Number.isFinite(vialCount) || vialCount <= 0) {
@@ -260,21 +269,50 @@ export const VaultPage: React.FC = () => {
       unitsPerMl: refillRequest.peptide.unitsPerMl,
     });
 
-    await db.transaction("rw", [db.peptides, db.stockItems], async () => {
-      await db.peptides.update(refillRequest.peptide.id, {
-        vialMg: mgPerVial,
-        concentrationMgPerMl: recalculated.concentrationMgPerMl,
-        concentrationMcgPerMl: recalculated.concentrationMcgPerMl,
-        doseMl: recalculated.doseMl,
-        doseUnits: recalculated.doseUnits,
-        estimatedDosesPerVial: recalculated.estimatedDosesPerVial,
-        percentOfVialPerDose: recalculated.percentOfVialPerDose,
-        currentVialStartedAt: nowIso,
-        openVialId: newOpenVialId,
-        efficacyVerifiedAt: undefined,
-        sourceStockItemId: stockItem.id,
-        updatedAt: nowIso,
-      });
+    const oldOpenVialId = refillRequest.peptide.openVialId || refillRequest.peptide.id;
+
+    await db.transaction("rw", [db.peptides, db.schedules, db.stockItems], async () => {
+      const sharedPeptides = await db.peptides.where("openVialId").equals(oldOpenVialId).toArray();
+      if (!sharedPeptides.some((peptide) => peptide.id === refillRequest.peptide.id)) {
+        sharedPeptides.push(refillRequest.peptide);
+      }
+      const sharedPeptideIds = new Set(sharedPeptides.map((peptide) => peptide.id));
+
+      for (const peptide of sharedPeptides) {
+        await db.peptides.update(peptide.id, {
+          vialMg: mgPerVial,
+          concentrationMgPerMl: recalculated.concentrationMgPerMl,
+          concentrationMcgPerMl: recalculated.concentrationMcgPerMl,
+          doseMl: recalculated.doseMl,
+          doseUnits: recalculated.doseUnits,
+          estimatedDosesPerVial: recalculated.estimatedDosesPerVial,
+          percentOfVialPerDose: recalculated.percentOfVialPerDose,
+          currentVialStartedAt: nowIso,
+          openVialId: newOpenVialId,
+          efficacyVerifiedAt: undefined,
+          sourceStockItemId: stockItem.id,
+          updatedAt: nowIso,
+        });
+      }
+
+      const linkedSchedules = await db.schedules.where("openVialId").equals(oldOpenVialId).toArray();
+      for (const schedule of linkedSchedules) {
+        await db.schedules.update(schedule.id, {
+          openVialId: newOpenVialId,
+          updatedAt: nowIso,
+        });
+      }
+
+      const legacyScheduleRows = (await db.schedules.toArray()).filter(
+        (schedule) => sharedPeptideIds.has(schedule.peptideId) && !schedule.openVialId
+      );
+      for (const schedule of legacyScheduleRows) {
+        await db.schedules.update(schedule.id, {
+          openVialId: newOpenVialId,
+          updatedAt: nowIso,
+        });
+      }
+
       await db.stockItems.update(stockItem.id, {
         numberOfVials: String(Math.max(0, Math.floor(vialCount) - 1)),
         updatedAt: nowIso,
@@ -331,7 +369,7 @@ export const VaultPage: React.FC = () => {
   );
 
   const scheduleByPeptideId = useMemo(
-    () => new Map((schedules || []).map((schedule) => [schedule.peptideId, schedule])),
+    () => makePreferredScheduleMap(schedules || []),
     [schedules]
   );
 
@@ -356,20 +394,13 @@ export const VaultPage: React.FC = () => {
   const availableStockByPeptideId = useMemo(() => {
     const map = new Map<string, StockItem[]>();
     for (const peptide of peptides || []) {
-      const options = (stockItemsByName.get(normalizePeptideName(peptide.name)) || []).filter((item) => {
-        const vialCount = item.numberOfVials ? Number(item.numberOfVials) : NaN;
-        const mgPerVial = item.mgPerVial ? Number(item.mgPerVial) : NaN;
-        return (
-          Number.isFinite(vialCount) &&
-          vialCount > 0 &&
-          Number.isFinite(mgPerVial) &&
-          mgPerVial > 0
-        );
-      });
+      const options = (stockItemsByName.get(normalizePeptideName(peptide.name)) || []).filter((item) =>
+        isAvailableStock(item, today)
+      );
       map.set(peptide.id, options);
     }
     return map;
-  }, [peptides, stockItemsByName]);
+  }, [peptides, stockItemsByName, today]);
 
   const getAvailableStockForPeptide = (peptide: Peptide) => {
     return availableStockByPeptideId.get(peptide.id) || [];
@@ -437,8 +468,7 @@ export const VaultPage: React.FC = () => {
     for (const item of stockItems) {
       const mgPerVial = item.mgPerVial ? Number(item.mgPerVial) : NaN;
       const vialCount = item.numberOfVials ? Number(item.numberOfVials) : NaN;
-      if (!Number.isFinite(mgPerVial) || mgPerVial <= 0) continue;
-      if (!Number.isFinite(vialCount) || vialCount <= 0) continue;
+      if (!hasUsableVialCount(item) || !isReceivedStock(item, today)) continue;
 
       const normalizedStockName = normalizePeptideName(item.name);
       const matchingPeptides = peptidesByName.get(normalizedStockName) || [];
@@ -694,6 +724,12 @@ export const VaultPage: React.FC = () => {
                 stockItems.map((item) => {
                   const parsedVials = item.numberOfVials ? parseInt(item.numberOfVials, 10) : NaN;
                   const isOutOfStock = !isNaN(parsedVials) && parsedVials <= 0;
+                  const isUnavailable = !isAvailableStock(item, today);
+                  const stockActionLabel = isOutOfStock
+                    ? "No Vials Available"
+                    : !isReceivedStock(item, today)
+                      ? "Not Received Yet"
+                      : "Add Peptide From Stock";
                   const stockProjection = stockProjectionById.get(item.id);
 
                   return (
@@ -832,11 +868,11 @@ export const VaultPage: React.FC = () => {
                       variant="secondary"
                       fullWidth
                       onClick={() => handleOpenVialFromStock(item)}
-                      disabled={isOutOfStock}
+                      disabled={isUnavailable}
                       style={{ marginTop: "12px" }}
                     >
                       <Dna size={16} />
-                      {isOutOfStock ? "No Vials Available" : "Add Peptide From Stock"}
+                      {stockActionLabel}
                     </Button>
                   </div>
                   );

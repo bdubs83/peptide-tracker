@@ -21,7 +21,42 @@ export async function deletePeptideWithSchedule(peptideId: string): Promise<void
 }
 
 export async function logInjectionEvent(log: InjectionLog): Promise<void> {
-  await db.injectionLogs.put(log);
+  const openVialId = log.openVialId || log.peptideId;
+  const matchingLogs = await db.injectionLogs
+    .where("peptideId")
+    .equals(log.peptideId)
+    .filter((existingLog) => {
+      const existingOpenVialId = existingLog.openVialId || existingLog.peptideId;
+      return existingLog.scheduledDate === log.scheduledDate && existingOpenVialId === openVialId;
+    })
+    .toArray();
+
+  const existingLog =
+    matchingLogs.find((candidate) => candidate.status === "scheduled") ||
+    matchingLogs.find((candidate) => candidate.status !== "scheduled");
+
+  if (!existingLog) {
+    await db.injectionLogs.put(log);
+    return;
+  }
+
+  await db.injectionLogs.update(existingLog.id, {
+    vaultUserId: log.vaultUserId,
+    openVialId: log.openVialId,
+    peptideNameSnapshot: log.peptideNameSnapshot,
+    scheduledDate: log.scheduledDate,
+    actualDateTime: log.actualDateTime,
+    doseValue: log.doseValue,
+    doseUnit: log.doseUnit,
+    drawMl: log.drawMl,
+    drawUnits: log.drawUnits,
+    status: log.status,
+    injectionSiteId: log.injectionSiteId,
+    injectionSiteLabel: log.injectionSiteLabel,
+    injectionSiteSide: log.injectionSiteSide,
+    notes: log.notes,
+    updatedAt: log.updatedAt,
+  });
 }
 
 export async function deleteInjectionLog(logId: string): Promise<void> {

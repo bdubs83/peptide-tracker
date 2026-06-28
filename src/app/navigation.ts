@@ -1,4 +1,4 @@
-import { Beaker, BookOpen, Calendar, Dna, User, Wrench } from "lucide-react";
+import { Beaker, BookOpen, Calendar, Dna, Link as LinkIcon, User, Wrench } from "lucide-react";
 
 export const navItems = [
   { path: "/tools", label: "Tools", Icon: Wrench },
@@ -6,6 +6,7 @@ export const navItems = [
   { path: "/calendar", label: "Calendar", Icon: Calendar },
   { path: "/peptides", label: "Peptides", Icon: Beaker },
   { path: "/guides", label: "Guides", Icon: BookOpen },
+  { path: "/resources", label: "Resources", Icon: LinkIcon },
   { path: "/settings", label: "Settings", Icon: User },
 ];
 

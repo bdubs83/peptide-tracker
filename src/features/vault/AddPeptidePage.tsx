@@ -19,6 +19,8 @@ import {
   parseLocalDate,
 } from "../../utils/dateUtils";
 import { getLegacyScheduleFirstDoseDate } from "../../utils/scheduleMigration";
+import { getPreferredSchedule } from "../../utils/scheduleUtils";
+import { isAvailableStock } from "../../utils/stockUtils";
 import { ChevronLeft, Plus, Save, Trash2 } from "lucide-react";
 import { PRELOADED_PEPTIDES } from "../../utils/peptideList";
 import { DEFAULT_VAULT_USER_ID } from "../../types/vaultUser";
@@ -27,6 +29,7 @@ type ScheduleType = "everyXDays" | "daysOfWeek";
 type AnchorType = "startDate" | "lastInjectionDate";
 type DoseScheduleRow = {
   id: string;
+  startDate: string;
   durationType: DoseScheduleDurationType;
   durationValue: string;
   intervalDays: string;
@@ -60,6 +63,7 @@ const isDoseScheduleDurationType = (value: string): value is DoseScheduleDuratio
   value === "injections" || value === "weeks" || value === "daysOfWeek";
 const makeDoseScheduleRow = (doseUnit: DoseUnit = "mg", doseValue = ""): DoseScheduleRow => ({
   id: crypto.randomUUID(),
+  startDate: "",
   durationType: "injections",
   durationValue: "",
   intervalDays: "3",
@@ -74,6 +78,7 @@ const getDefaultDoseScheduleRows = (doseUnit: DoseUnit, doseValue: string): Dose
 
 const phaseToRow = (phase: DoseSchedulePhase): DoseScheduleRow => ({
   id: phase.id,
+  startDate: phase.startDate || "",
   durationType: phase.durationType,
   durationValue: phase.durationValue ? String(phase.durationValue) : "",
   intervalDays: phase.intervalDays ? String(phase.intervalDays) : "3",
@@ -83,6 +88,7 @@ const phaseToRow = (phase: DoseSchedulePhase): DoseScheduleRow => ({
 });
 const legacyScheduleToRow = (schedule: PeptideSchedule, doseUnit: DoseUnit, doseValue: number): DoseScheduleRow => ({
   id: crypto.randomUUID(),
+  startDate: "",
   durationType: schedule.scheduleType === "daysOfWeek" ? "daysOfWeek" : "injections",
   durationValue: "",
   intervalDays: String(schedule.intervalDays || 3),
@@ -107,6 +113,7 @@ const getStandardSyringeOption = (size: number) => {
   if (size === 0.3) return "0.3";
   if (size === 0.5) return "0.5";
   if (size === 1) return "1.0";
+  if (size === 3) return "3.0";
   return null;
 };
 type AddSourceType = "manual" | "stock" | "openVial";
@@ -123,15 +130,13 @@ export const AddPeptidePage: React.FC = () => {
   const existingData = useLiveQuery(async () => {
     if (!id) return null;
     const peptide = await db.peptides.get(id);
-    const schedule = await db.schedules.where("peptideId").equals(id).first();
+    const peptideSchedules = await db.schedules.where("peptideId").equals(id).toArray();
+    const schedule = getPreferredSchedule(peptideSchedules, id);
     const logsList = await db.injectionLogs.where("peptideId").equals(id).toArray();
     return { peptide, schedule, logsList };
   }, [id]);
   const settingsList = useLiveQuery(() => db.appSettings.toArray());
-  const vaultUsers = useLiveQuery(async () => {
-    await ensureDefaultVaultUser();
-    return db.vaultUsers.orderBy("sortOrder").toArray();
-  });
+  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
   const openVialOptions = useLiveQuery(() => db.peptides.toArray());
 
   // Form states
@@ -158,6 +163,10 @@ export const AddPeptidePage: React.FC = () => {
   const [pendingPastInjectionSave, setPendingPastInjectionSave] =
     useState<PendingPastInjectionSave | null>(null);
   const addPeptideLocationState = location.state as AddPeptideLocationState | null;
+
+  useEffect(() => {
+    void ensureDefaultVaultUser();
+  }, []);
 
   useEffect(() => {
     if (isEditMode) return;
@@ -395,6 +404,10 @@ export const AddPeptidePage: React.FC = () => {
         const stockItem = await db.stockItems.get(addPeptideLocationState.sourceStockItemId);
         const vialCount = stockItem?.numberOfVials ? parseInt(stockItem.numberOfVials, 10) : NaN;
 
+        if (!stockItem || !isAvailableStock(stockItem, today)) {
+          throw new Error("Selected stock item is not available to open yet.");
+        }
+
         if (stockItem && !isNaN(vialCount) && vialCount > 0) {
           await db.stockItems.update(stockItem.id, {
             numberOfVials: String(Math.max(0, vialCount - 1)),
@@ -407,25 +420,42 @@ export const AddPeptidePage: React.FC = () => {
     navigate(isEditMode ? `/vault/${peptide.id}` : "/vault");
   };
 
+  const persistPeptideScheduleWithMessage = async (
+    peptide: Peptide,
+    schedule: PeptideSchedule,
+    pastDates: string[],
+    nowIso: string
+  ) => {
+    try {
+      await persistPeptideSchedule(peptide, schedule, pastDates, nowIso);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to save this peptide.");
+      return false;
+    }
+  };
+
   const handleConfirmPastInjections = async () => {
     if (!pendingPastInjectionSave) return;
-    await persistPeptideSchedule(
+    const saved = await persistPeptideScheduleWithMessage(
       pendingPastInjectionSave.peptide,
       pendingPastInjectionSave.schedule,
       pendingPastInjectionSave.pastDates,
       pendingPastInjectionSave.nowIso
     );
+    if (!saved) return;
     setPendingPastInjectionSave(null);
   };
 
   const handleDenyPastInjections = async () => {
     if (!pendingPastInjectionSave) return;
-    await persistPeptideSchedule(
+    const saved = await persistPeptideScheduleWithMessage(
       pendingPastInjectionSave.peptide,
       pendingPastInjectionSave.schedule,
       [],
       pendingPastInjectionSave.nowIso
     );
+    if (!saved) return;
     setPendingPastInjectionSave(null);
   };
 
@@ -492,9 +522,14 @@ export const AddPeptidePage: React.FC = () => {
         alert("Each dosing schedule line before the last needs a valid duration.");
         return;
       }
+      if (index > 0 && row.startDate && row.startDate < anchorDate) {
+        alert("A phase start date cannot be before the first dose date.");
+        return;
+      }
 
       phases.push({
         id: row.id,
+        startDate: index > 0 && row.startDate ? row.startDate : undefined,
         durationType: row.durationType,
         durationValue: isLast ? undefined : phaseDuration,
         intervalDays: row.durationType === "injections" ? phaseInterval : undefined,
@@ -544,10 +579,16 @@ export const AddPeptidePage: React.FC = () => {
       estimatedDosesPerVial: calc.estimatedDosesPerVial,
       percentOfVialPerDose: calc.percentOfVialPerDose,
       notes: notes.trim() || undefined,
-      sourceStockItemId: sourceType === "stock" ? addPeptideLocationState?.sourceStockItemId : existingData?.peptide?.sourceStockItemId,
+      sourceStockItemId:
+        sourceType === "stock"
+          ? addPeptideLocationState?.sourceStockItemId
+          : selectedSourceOpenVial?.sourceStockItemId || existingData?.peptide?.sourceStockItemId,
       sourceOpenVialId: selectedSourceOpenVial ? openVialId : existingData?.peptide?.sourceOpenVialId,
       vaultUserId,
       openVialId,
+      currentVialStartedAt: isEditMode
+        ? existingData?.peptide?.currentVialStartedAt
+        : selectedSourceOpenVial?.currentVialStartedAt || selectedSourceOpenVial?.createdAt || nowIso,
       createdAt: existingData?.peptide?.createdAt || nowIso,
       updatedAt: nowIso,
     };
@@ -602,7 +643,7 @@ export const AddPeptidePage: React.FC = () => {
       return;
     }
 
-    await persistPeptideSchedule(newPeptide, newSchedule, [], nowIso);
+    await persistPeptideScheduleWithMessage(newPeptide, newSchedule, [], nowIso);
   };
 
   const weekdays = [
@@ -766,6 +807,7 @@ export const AddPeptidePage: React.FC = () => {
                 { value: "0.3", label: "0.3 mL" },
                 { value: "0.5", label: "0.5 mL" },
                 { value: "1.0", label: "1.0 mL" },
+                { value: "3.0", label: "3.0 mL" },
                 { value: "custom", label: "Custom" },
               ]}
             />
@@ -903,6 +945,21 @@ export const AddPeptidePage: React.FC = () => {
                       </button>
                     )}
                   </div>
+
+                  <Input
+                    label="Phase Start"
+                    type="date"
+                    value={index === 0 ? anchorDate : row.startDate}
+                    onChange={(e) => {
+                      if (index === 0) {
+                        setAnchorType("startDate");
+                        setAnchorDate(e.target.value);
+                      } else {
+                        updateDoseScheduleRow(row.id, { startDate: e.target.value });
+                      }
+                    }}
+                    required={index === 0}
+                  />
 
                   {showDaysOfWeek ? (
                     <>

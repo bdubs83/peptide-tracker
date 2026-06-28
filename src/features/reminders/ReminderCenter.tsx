@@ -136,12 +136,13 @@ export const ReminderCenter: React.FC = () => {
   const peptides = useLiveQuery(() => db.peptides.toArray());
   const schedules = useLiveQuery(() => db.schedules.toArray());
   const logs = useLiveQuery(() => db.injectionLogs.toArray());
-  const vaultUsers = useLiveQuery(async () => {
-    await ensureDefaultVaultUser();
-    return db.vaultUsers.orderBy("sortOrder").toArray();
-  });
+  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
   const [isCollapsed, setIsCollapsed] = React.useState(false);
   const [now, setNow] = React.useState(new Date());
+
+  useEffect(() => {
+    void ensureDefaultVaultUser();
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(new Date()), 60 * 1000);

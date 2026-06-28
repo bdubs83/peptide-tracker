@@ -8,6 +8,11 @@ interface DoseScheduleOccurrence {
   phase: DoseSchedulePhase;
 }
 
+const NEXT_DOSE_LOOKAHEAD_DAYS = 365;
+const OPEN_VIAL_PROJECTION_DAYS = 365;
+const STOCK_PROJECTION_DAYS = 1800;
+const SCHEDULE_OCCURRENCE_LIMIT = 10000;
+
 export function getLocalDateString(date = new Date()): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -96,21 +101,29 @@ export function getNextInjectionDate(
       return fromDateStr;
     }
 
-    let k = startK;
-    while (true) {
-      const anchorDate = parseLocalDate(anchor);
-      anchorDate.setDate(anchorDate.getDate() + k * interval);
-      const candidateStr = getLocalDateString(anchorDate);
+    const parsedAnchor = parseLocalDate(anchor);
+    const fromDate = parseLocalDate(fromDateStr);
+    const diffDays = Math.floor(
+      (fromDate.getTime() - parsedAnchor.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    let k = diffDays > 0 ? Math.max(startK, Math.ceil(diffDays / interval)) : startK;
+    let attempts = 0;
+    while (attempts <= SCHEDULE_OCCURRENCE_LIMIT) {
+      const candidateDate = new Date(parsedAnchor.getTime());
+      candidateDate.setDate(candidateDate.getDate() + k * interval);
+      const candidateStr = getLocalDateString(candidateDate);
 
       if (candidateStr >= fromDateStr) {
         if (candidateStr === fromDateStr && loggedDates.has(candidateStr)) {
           k++;
+          attempts++;
           continue;
         }
         return candidateStr;
       }
       k++;
-      if (k > 10000) break;
+      attempts++;
     }
     return fromDateStr;
   } else if (schedule.scheduleType === "daysOfWeek") {
@@ -159,17 +172,19 @@ export function getUpcomingInjectionDates(
 
   const dates: string[] = [];
   const checkDate = parseLocalDate(startDateStr);
+  let checkedDays = 0;
 
   while (true) {
     const checkStr = getLocalDateString(checkDate);
     if (checkStr > endDateStr) break;
+    checkedDays += 1;
+    if (checkedDays > SCHEDULE_OCCURRENCE_LIMIT) break;
 
     if (isScheduledDate(schedule, checkStr)) {
       dates.push(checkStr);
     }
 
     checkDate.setDate(checkDate.getDate() + 1);
-    if (dates.length > 500) break;
   }
 
   return dates;
@@ -187,12 +202,25 @@ export function getDoseScheduleOccurrences(
 
   const occurrences: DoseScheduleOccurrence[] = [];
   let phaseIndex = 0;
-  let phaseStartDate = startDateStr;
+  let phaseStartDate = dosePhases[0].startDate && dosePhases[0].startDate > startDateStr
+    ? dosePhases[0].startDate
+    : startDateStr;
   let injectionsInPhase = 0;
-  let currentDate = startDateStr;
+  let currentDate = phaseStartDate;
+
+  const getNextPhaseStartDate = (phase: DoseSchedulePhase, fallbackDate: string) =>
+    phase.startDate && phase.startDate > fallbackDate ? phase.startDate : fallbackDate;
 
   while (currentDate <= endDateStr && phaseIndex < dosePhases.length) {
     const phase = dosePhases[phaseIndex];
+    const nextPhase = dosePhases[phaseIndex + 1];
+
+    if (nextPhase?.startDate && currentDate >= nextPhase.startDate) {
+      phaseIndex += 1;
+      phaseStartDate = nextPhase.startDate;
+      injectionsInPhase = 0;
+      continue;
+    }
 
     if (
       !phase.isContinuous &&
@@ -202,7 +230,8 @@ export function getDoseScheduleOccurrences(
     ) {
       if (phaseIndex < dosePhases.length - 1) {
         phaseIndex += 1;
-        phaseStartDate = currentDate;
+        phaseStartDate = getNextPhaseStartDate(dosePhases[phaseIndex], currentDate);
+        currentDate = phaseStartDate;
         injectionsInPhase = 0;
         continue;
       }
@@ -238,8 +267,10 @@ export function getDoseScheduleOccurrences(
         if (durationValue > 0 && injectionsInPhase >= durationValue) {
           if (phaseIndex < dosePhases.length - 1) {
             phaseIndex += 1;
-            phaseStartDate = addDays(currentDate, 1);
+            phaseStartDate = getNextPhaseStartDate(dosePhases[phaseIndex], addDays(currentDate, 1));
+            currentDate = phaseStartDate;
             injectionsInPhase = 0;
+            continue;
           } else {
             break;
           }
@@ -248,7 +279,7 @@ export function getDoseScheduleOccurrences(
     }
 
     currentDate = addDays(currentDate, 1);
-    if (occurrences.length > 10000) break;
+    if (occurrences.length > SCHEDULE_OCCURRENCE_LIMIT) break;
   }
 
   return occurrences;
@@ -333,7 +364,7 @@ export function getNextScheduledDoseDate(
 
   const phaseStart = schedule.doseScheduleStartDate || schedule.startDate || schedule.lastInjectionDate || fromDateStr;
   const searchStart = fromDateStr < phaseStart ? phaseStart : fromDateStr;
-  const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(searchStart, 10000));
+  const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(searchStart, NEXT_DOSE_LOOKAHEAD_DAYS));
   const nextOccurrence = occurrences.find(
     (occurrence) => occurrence.date >= searchStart && !loggedDates.has(occurrence.date)
   );
@@ -396,7 +427,7 @@ export function getScheduledDoseForDate(
 
 export function isCurrentVialLog(peptide: Peptide, log: InjectionLog): boolean {
   if (!peptide.currentVialStartedAt) return true;
-  const logTime = log.createdAt || log.actualDateTime;
+  const logTime = log.actualDateTime || log.createdAt;
   return Boolean(logTime && logTime >= peptide.currentVialStartedAt);
 }
 
@@ -435,7 +466,7 @@ export function getEstimatedRemainingDoses(
 
   if (hasDoseSchedule(schedule)) {
     const phaseStart = schedule.doseScheduleStartDate || schedule.startDate || schedule.lastInjectionDate || fromDateStr;
-    const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(fromDateStr, 10000)).filter(
+    const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(fromDateStr, OPEN_VIAL_PROJECTION_DAYS)).filter(
       (occurrence) => occurrence.date >= fromDateStr && !loggedScheduledDates.has(occurrence.date)
     );
 
@@ -512,7 +543,7 @@ export function getEstimatedEmptyDate(
 
   if (hasDoseSchedule) {
     const phaseStart = schedule.doseScheduleStartDate || schedule.startDate || schedule.lastInjectionDate || fromDateStr;
-    const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(fromDateStr, 10000)).filter(
+    const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(fromDateStr, OPEN_VIAL_PROJECTION_DAYS)).filter(
       (occurrence) => occurrence.date >= fromDateStr && !loggedScheduledDates.has(occurrence.date)
     );
 
@@ -528,7 +559,7 @@ export function getEstimatedEmptyDate(
   }
 
   let currentDate = fromDateStr;
-  for (let i = 0; i < 10000; i++) {
+  for (let i = 0; i < OPEN_VIAL_PROJECTION_DAYS; i++) {
     const nextDate = getNextInjectionDate(schedule, currentDate, loggedScheduledDates);
     if (!nextDate) break;
 
@@ -588,7 +619,7 @@ export function getSharedOpenVialProjection(
 
     if (hasDoseSchedule(schedule)) {
       const phaseStart = schedule.doseScheduleStartDate || schedule.startDate || schedule.lastInjectionDate || fromDateStr;
-      const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(fromDateStr, 10000)).filter(
+      const occurrences = getDoseScheduleOccurrences(schedule, phaseStart, addDays(fromDateStr, STOCK_PROJECTION_DAYS)).filter(
         (occurrence) => occurrence.date >= fromDateStr && !loggedScheduledDates.has(occurrence.date)
       );
 
@@ -606,7 +637,7 @@ export function getSharedOpenVialProjection(
     }
 
     let currentDate = fromDateStr;
-    for (let i = 0; i < 10000; i++) {
+    for (let i = 0; i < STOCK_PROJECTION_DAYS; i++) {
       const nextDate = getNextInjectionDate(schedule, currentDate, loggedScheduledDates);
       if (!nextDate) break;
 

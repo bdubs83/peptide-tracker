@@ -434,7 +434,7 @@ h1, h2, h3, h4, h5, h6 {
   -webkit-backdrop-filter: var(--backdrop-blur);
   border-top: 1px solid var(--border-color);
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   z-index: 100;
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -448,11 +448,19 @@ h1, h2, h3, h4, h5, h6 {
   border: none;
   color: var(--text-secondary);
   font-family: var(--font-sans);
-  font-size: 0.7rem;
+  font-size: 0.64rem;
   font-weight: 500;
-  gap: 4px;
+  gap: 3px;
+  min-width: 0;
   cursor: pointer;
   transition: color var(--transition-fast);
+}
+
+.nav-tab-button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-tab-button.active {
@@ -619,6 +627,156 @@ h1, h2, h3, h4, h5, h6 {
 .desktop-page-content .calendar-details-pane {
   position: sticky;
   top: 28px;
+}
+
+.calendar-page,
+.calendar-desktop-layout,
+.calendar-grid-pane,
+.calendar-details-pane,
+.calendar-grid {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.calendar-grid {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+}
+
+.calendar-weekday-row,
+.calendar-day-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.calendar-weekday-row {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.calendar-day-grid {
+  gap: 6px;
+}
+
+.calendar-weekday-label {
+  min-width: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  padding: 4px 0;
+}
+
+.calendar-day-cell {
+  min-width: 0;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 2px;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  position: relative;
+  transition: all var(--transition-fast);
+  overflow: hidden;
+}
+
+.calendar-user-indicators {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+}
+
+.calendar-user-dot-group {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  justify-items: center;
+}
+
+.calendar-user-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.46rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.calendar-user-dot-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.calendar-user-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.calendar-more-dot {
+  color: var(--text-secondary);
+  font-size: 0.48rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.mobile-app-container,
+.mobile-app-container .page-content,
+.mobile-app-container .card-premium {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@media (max-width: 420px) {
+  .mobile-app-container .page-content {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .mobile-app-container .card-premium {
+    padding: 12px;
+  }
+
+  .calendar-day-grid {
+    gap: 4px;
+  }
+
+  .calendar-day-cell {
+    padding: 4px 1px;
+    border-radius: 7px;
+  }
+
+  .calendar-day-cell > span:first-child {
+    font-size: 0.78rem !important;
+  }
+
+  .calendar-user-indicators {
+    min-height: 20px;
+  }
+
+  .calendar-user-label {
+    font-size: 0.4rem;
+  }
+
+  .calendar-user-dot {
+    width: 4px;
+    height: 4px;
+  }
 }
 
 .desktop-app-shell .modal-overlay {
@@ -825,4 +983,46 @@ h1, h2, h3, h4, h5, h6 {
 
 .btn-full {
   width: 100%;
+}
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .export-report-printable,
+  .export-report-printable * {
+    visibility: visible;
+  }
+
+  .export-report-printable {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  .export-report-printable h2,
+  .export-report-printable h3,
+  .export-report-printable strong,
+  .export-report-printable p,
+  .export-report-printable div,
+  .export-report-printable table,
+  .export-report-printable th,
+  .export-report-printable td {
+    color: #111827 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
 }

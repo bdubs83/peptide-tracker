@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Activity, CalendarDays, Eye, EyeOff, Plus, Trash2, Users } from "lucide-react";
 import { Button } from "../../components/Button";
@@ -74,6 +74,7 @@ const colors = [
   "#9b5fc0",
 ];
 const manualCurveLimit = 7;
+const decayLookbackHalfLives = 15;
 const timelineOptions = [7, 14, 30, 60, 90];
 const frequencies = [
   { label: "Once", days: 0 },
@@ -254,12 +255,15 @@ function buildChartData(entries: Entry[], startDay: number, endDay: number): Cha
       }
 
       const halfLifeDays = Number(entry.halfLifeHours) / 24;
+      const earliestRelevantDoseDay = day - halfLifeDays * decayLookbackHalfLives;
       let activity = 0;
 
       if (entry.doseEvents?.length) {
         for (const event of entry.doseEvents) {
           const elapsed = day - event.day;
-          if (elapsed >= 0) activity += doseToMg(event.dose, event.unit) * Math.pow(0.5, elapsed / halfLifeDays);
+          if (elapsed >= 0 && event.day >= earliestRelevantDoseDay) {
+            activity += doseToMg(event.dose, event.unit) * Math.pow(0.5, elapsed / halfLifeDays);
+          }
         }
       } else {
         const doseMg = doseToMg(entry.dose, entry.unit);
@@ -270,8 +274,12 @@ function buildChartData(entries: Entry[], startDay: number, endDay: number): Cha
               ? entry.customFrequencyDays
               : entry.frequencyDays || days + 1;
         const finalDoseDay = entry.endDay === "" ? day : Math.min(day, entry.endDay);
+        const firstDoseDay =
+          increment > 0 && earliestRelevantDoseDay > entry.startDay
+            ? entry.startDay + Math.ceil((earliestRelevantDoseDay - entry.startDay) / increment) * increment
+            : entry.startDay;
 
-        for (let doseDay = entry.startDay; doseDay <= finalDoseDay; doseDay += increment) {
+        for (let doseDay = firstDoseDay; doseDay <= finalDoseDay; doseDay += increment) {
           if (!isDoseDay(entry, doseDay)) continue;
           const elapsed = day - doseDay;
           if (elapsed >= 0) activity += doseMg * Math.pow(0.5, elapsed / halfLifeDays);
@@ -659,14 +667,16 @@ function buildStackEntries({
         });
       };
 
+      const futureStartStr = startDateStr < todayStr ? todayStr : startDateStr;
+
       if (hasDoseSchedule(schedule)) {
-        const phaseStart = schedule.doseScheduleStartDate || schedule.startDate || schedule.lastInjectionDate || startDateStr;
+        const phaseStart = schedule.doseScheduleStartDate || schedule.startDate || schedule.lastInjectionDate || futureStartStr;
         for (const occurrence of getDoseScheduleOccurrences(schedule, phaseStart, endDateStr)) {
-          if (occurrence.date < startDateStr) continue;
+          if (occurrence.date < futureStartStr) continue;
           addEvent(occurrence.date, occurrence.phase.doseValue, occurrence.phase.doseUnit);
         }
       } else {
-        for (const date of getUpcomingInjectionDates(schedule, startDateStr, endDateStr)) {
+        for (const date of getUpcomingInjectionDates(schedule, futureStartStr, endDateStr)) {
           addEvent(date, peptide.desiredDoseValue, peptide.desiredDoseUnit);
         }
       }
@@ -689,7 +699,7 @@ function buildStackEntries({
             return;
           }
           if (log.status === "manual") {
-            addEvent(log.scheduledDate, log.doseValue, log.doseUnit, `${log.scheduledDate}-${log.id}`);
+            addEvent(log.scheduledDate, log.doseValue, log.doseUnit, log.scheduledDate);
           }
         });
 
@@ -749,10 +759,7 @@ export const MultiHalfLifeTool: React.FC = () => {
   const [stackMessage, setStackMessage] = useState("");
   const [days, setDays] = useState(30);
   const [combined, setCombined] = useState(false);
-  const vaultUsers = useLiveQuery(async () => {
-    await ensureDefaultVaultUser();
-    return db.vaultUsers.orderBy("sortOrder").toArray();
-  });
+  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
   const peptides = useLiveQuery(() => db.peptides.toArray());
   const schedules = useLiveQuery(() => db.schedules.toArray());
   const logs = useLiveQuery(() => db.injectionLogs.toArray());
@@ -763,6 +770,10 @@ export const MultiHalfLifeTool: React.FC = () => {
   const timelineStartDay = mode === "stack" ? -30 : 0;
   const timelineEndDay = mode === "stack" ? 60 : days;
   const chartData = useMemo(() => buildChartData(entries, timelineStartDay, timelineEndDay), [entries, timelineStartDay, timelineEndDay]);
+
+  useEffect(() => {
+    void ensureDefaultVaultUser();
+  }, []);
 
   function updateEntry(id: string, patch: Partial<Entry>) {
     setEntries((current) => current.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)));

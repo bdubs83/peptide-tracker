@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useId, useRef, useState, useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signOut, type User } from "firebase/auth";
 import { db } from "../../db/db";
@@ -41,6 +41,7 @@ import {
   LogOut,
   Smartphone,
   HelpCircle,
+  FileText,
 } from "lucide-react";
 import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
@@ -140,18 +141,95 @@ const toCsv = (headers: string[], rows: unknown[][]) => {
   return [headers.map(csvEscape).join(","), ...rows.map((row) => row.map(csvEscape).join(","))].join("\n");
 };
 
+const isRecordObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === "object" && !Array.isArray(value));
+
+const hasString = (value: Record<string, unknown>, key: string) => typeof value[key] === "string" && value[key] !== "";
+const hasNumber = (value: Record<string, unknown>, key: string) => typeof value[key] === "number" && Number.isFinite(value[key]);
+const isDoseUnitValue = (value: unknown) => value === "mcg" || value === "mg";
+
+const isPeptideBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return (
+    hasString(value, "id") &&
+    hasString(value, "name") &&
+    hasNumber(value, "vialMg") &&
+    hasNumber(value, "bacWaterMl") &&
+    hasNumber(value, "desiredDoseValue") &&
+    isDoseUnitValue(value.desiredDoseUnit) &&
+    hasString(value, "createdAt") &&
+    hasString(value, "updatedAt")
+  );
+};
+
+const isScheduleBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return (
+    hasString(value, "id") &&
+    hasString(value, "peptideId") &&
+    (value.scheduleType === "daysOfWeek" || value.scheduleType === "everyXDays") &&
+    typeof value.isActive === "boolean" &&
+    hasString(value, "createdAt") &&
+    hasString(value, "updatedAt")
+  );
+};
+
+const isInjectionLogBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return (
+    hasString(value, "id") &&
+    hasString(value, "peptideId") &&
+    hasString(value, "peptideNameSnapshot") &&
+    hasString(value, "scheduledDate") &&
+    hasNumber(value, "doseValue") &&
+    isDoseUnitValue(value.doseUnit) &&
+    hasNumber(value, "drawMl") &&
+    hasNumber(value, "drawUnits") &&
+    (value.status === "scheduled" || value.status === "taken" || value.status === "skipped" || value.status === "missed" || value.status === "manual") &&
+    hasString(value, "createdAt") &&
+    hasString(value, "updatedAt")
+  );
+};
+
+const isWeightLogBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return hasString(value, "id") && hasString(value, "date") && hasString(value, "createdAt") && hasString(value, "updatedAt");
+};
+
+const isStockItemBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return hasString(value, "id") && hasString(value, "name") && hasString(value, "createdAt") && hasString(value, "updatedAt");
+};
+
+const isVaultUserBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return hasString(value, "id") && hasString(value, "displayName") && hasString(value, "color") && hasNumber(value, "sortOrder");
+};
+
+const isAppSettingBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return hasString(value, "key") && "value" in value;
+};
+
 const isBackupData = (value: unknown): value is BackupData => {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<BackupData>;
   return (
     candidate.version === 1 &&
     Array.isArray(candidate.peptides) &&
+    candidate.peptides.every(isPeptideBackupRecord) &&
     Array.isArray(candidate.schedules) &&
+    candidate.schedules.every(isScheduleBackupRecord) &&
     Array.isArray(candidate.injectionLogs) &&
+    candidate.injectionLogs.every(isInjectionLogBackupRecord) &&
     Array.isArray(candidate.weightLogs) &&
+    candidate.weightLogs.every(isWeightLogBackupRecord) &&
     (candidate.stockItems === undefined || Array.isArray(candidate.stockItems)) &&
+    (candidate.stockItems === undefined || candidate.stockItems.every(isStockItemBackupRecord)) &&
     (candidate.vaultUsers === undefined || Array.isArray(candidate.vaultUsers)) &&
-    Array.isArray(candidate.appSettings)
+    (candidate.vaultUsers === undefined || candidate.vaultUsers.every(isVaultUserBackupRecord)) &&
+    Array.isArray(candidate.appSettings) &&
+    candidate.appSettings.every(isAppSettingBackupRecord)
   );
 };
 
@@ -458,6 +536,7 @@ type ProfilePageProps = {
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const backupInputRef = useRef<HTMLInputElement | null>(null);
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -1379,6 +1458,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   { value: "0.3", label: "0.3 mL" },
                   { value: "0.5", label: "0.5 mL" },
                   { value: "1.0", label: "1.0 mL" },
+                  { value: "3.0", label: "3.0 mL" },
                 ]}
               />
               <Select
@@ -1563,6 +1643,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
               }}
             />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+              <Button variant="primary" onClick={() => navigate("/exports")}>
+                <FileText size={16} />
+                Report Center
+              </Button>
               <Button variant="primary" onClick={handleExportBackup}>
                 <Download size={16} />
                 Backup JSON

@@ -7,6 +7,7 @@ import {
   getWeekBasedDoseScheduleStockProjection,
   getEstimatedRemainingDoses,
   getSharedOpenVialProjection,
+  isCurrentVialLog,
 } from "./dateUtils";
 import { convertLegacyScheduleToDoseSchedule } from "./scheduleMigration";
 import type { PeptideSchedule } from "../types/schedule";
@@ -70,6 +71,36 @@ describe("dateUtils", () => {
 
       const loggedDates = new Set(["2026-06-10"]);
       expect(getNextInjectionDate(schedule, "2026-06-10", loggedDates)).toBe("2026-06-13");
+    });
+
+    it("fast-forwards from an old start date without changing every-X-days results", () => {
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        intervalDays: 3,
+        startDate: "2020-01-01",
+        isActive: true,
+        createdAt: "2020-01-01T12:00:00Z",
+        updatedAt: "2020-01-01T12:00:00Z",
+      };
+
+      expect(getNextInjectionDate(schedule, "2026-06-29")).toBe("2026-07-01");
+    });
+
+    it("fast-forwards from an old last injection anchor while respecting the next-dose offset", () => {
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        intervalDays: 5,
+        lastInjectionDate: "2020-01-01",
+        isActive: true,
+        createdAt: "2020-01-01T12:00:00Z",
+        updatedAt: "2020-01-01T12:00:00Z",
+      };
+
+      expect(getNextInjectionDate(schedule, "2026-06-29")).toBe("2026-07-03");
     });
   });
 
@@ -379,6 +410,49 @@ describe("dateUtils", () => {
 
       expect(dates).toEqual(["2026-06-01", "2026-06-03", "2026-06-05"]);
     });
+
+    it("allows a later dosing phase to start on an exact date after one titration dose", () => {
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        intervalDays: 7,
+        startDate: "2026-05-31",
+        doseScheduleStartDate: "2026-05-31",
+        doseSchedule: [
+          {
+            id: "phase-1",
+            durationType: "injections",
+            durationValue: 1,
+            intervalDays: 7,
+            doseValue: 2,
+            doseUnit: "mg",
+          },
+          {
+            id: "phase-2",
+            startDate: "2026-06-03",
+            durationType: "daysOfWeek",
+            daysOfWeek: [2, 5],
+            doseValue: 4,
+            doseUnit: "mg",
+            isContinuous: true,
+          },
+        ],
+        isActive: true,
+        createdAt: "2026-05-31T12:00:00Z",
+        updatedAt: "2026-05-31T12:00:00Z",
+      };
+
+      const occurrences = getDoseScheduleOccurrences(schedule, "2026-05-31", "2026-06-12");
+
+      expect(occurrences.map((occurrence) => occurrence.date)).toEqual([
+        "2026-05-31",
+        "2026-06-05",
+        "2026-06-09",
+        "2026-06-12",
+      ]);
+      expect(occurrences.map((occurrence) => occurrence.phase.doseValue)).toEqual([2, 4, 4, 4]);
+    });
   });
 
   describe("convertLegacyScheduleToDoseSchedule", () => {
@@ -557,6 +631,44 @@ describe("dateUtils", () => {
 
       expect(getEstimatedRemainingDoses(peptide, schedule, logs, "2026-06-20")).toBe(5);
       expect(getEstimatedEmptyDate(peptide, schedule, logs, "2026-06-20")).toBe("2026-07-18");
+    });
+
+    it("uses actual injection time before row creation time for current vial tracking", () => {
+      const peptide: Peptide = {
+        id: "p1",
+        name: "Test Peptide",
+        vialMg: 10,
+        bacWaterMl: 2,
+        desiredDoseValue: 2,
+        desiredDoseUnit: "mg",
+        syringeSizeMl: 1,
+        unitsPerMl: 100,
+        concentrationMgPerMl: 5,
+        concentrationMcgPerMl: 5000,
+        doseMl: 0.4,
+        doseUnits: 40,
+        estimatedDosesPerVial: 5,
+        percentOfVialPerDose: 20,
+        currentVialStartedAt: "2026-06-25T08:00:00.000Z",
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-25T08:00:00Z",
+      };
+      const convertedPlaceholderLog: InjectionLog = {
+        id: "converted-placeholder",
+        peptideId: "p1",
+        peptideNameSnapshot: "Test Peptide",
+        scheduledDate: "2026-06-26",
+        actualDateTime: "2026-06-26T08:00:00.000Z",
+        doseValue: 2,
+        doseUnit: "mg",
+        drawMl: 0.4,
+        drawUnits: 40,
+        status: "taken",
+        createdAt: "2026-06-20T08:00:00.000Z",
+        updatedAt: "2026-06-26T08:00:00.000Z",
+      };
+
+      expect(isCurrentVialLog(peptide, convertedPlaceholderLog)).toBe(true);
     });
   });
 

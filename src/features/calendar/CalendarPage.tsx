@@ -46,10 +46,20 @@ import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
 import { DEFAULT_VAULT_USER_ID } from "../../types/vaultUser";
 import { SyringeVisualizer } from "../../components/SyringeVisualizer";
+import { makePreferredScheduleMap } from "../../utils/scheduleUtils";
 
 type CalendarEventFilter = "all" | "due" | "missed" | "upcoming" | "logged";
 const googleSyncedEventIdsKey = "googleCalendar_syncedEventIds";
 const calendarRepairWindowDays = 365;
+const pastTakenRepairNote = "Marked taken by past dosing schedule repair.";
+const pastTakenRepairCreatedNote = "Marked taken by past dosing schedule repair (created).";
+const pastTakenRepairConvertedNote = "Marked taken by past dosing schedule repair (converted).";
+const autoLoggedScheduleNote = "Auto-logged from verified past dosing schedule.";
+const pastTakenRepairNotes = new Set([
+  pastTakenRepairNote,
+  pastTakenRepairCreatedNote,
+  pastTakenRepairConvertedNote,
+]);
 
 const filterOptions: Array<{ value: CalendarEventFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -239,6 +249,161 @@ const buildUpcomingCalendarRepairLogs = (
   return repairLogs;
 };
 
+type PastCalendarRepairResult = {
+  createdLogs: InjectionLog[];
+  updatedLogs: Array<{
+    id: string;
+    actualDateTime: string;
+    doseValue: number;
+    doseUnit: InjectionLog["doseUnit"];
+    drawMl: number;
+    drawUnits: number;
+  }>;
+};
+
+const getScheduleFirstDoseDate = (schedule: PeptideSchedule) => {
+  if (schedule.doseScheduleStartDate) return schedule.doseScheduleStartDate;
+  if (schedule.startDate) return schedule.startDate;
+  if (schedule.lastInjectionDate) return addDays(schedule.lastInjectionDate, Math.max(1, schedule.intervalDays || 1));
+  return "";
+};
+
+const buildPastTakenCalendarRepair = (
+  endDate: string,
+  peptides: Peptide[],
+  schedules: PeptideSchedule[],
+  logs: InjectionLog[]
+): PastCalendarRepairResult => {
+  const peptideById = new Map(peptides.map((peptide) => [peptide.id, peptide]));
+  const logsByPeptideDate = new Map<string, InjectionLog[]>();
+  const nowIso = new Date().toISOString();
+  const result: PastCalendarRepairResult = {
+    createdLogs: [],
+    updatedLogs: [],
+  };
+
+  for (const log of logs) {
+    const key = `${log.peptideId}|${log.scheduledDate}`;
+    const dayLogs = logsByPeptideDate.get(key) || [];
+    dayLogs.push(log);
+    logsByPeptideDate.set(key, dayLogs);
+  }
+
+  for (const schedule of schedules) {
+    if (!schedule.isActive) continue;
+
+    const peptide = peptideById.get(schedule.peptideId);
+    if (!peptide) continue;
+
+    const startDate = getScheduleFirstDoseDate(schedule);
+    if (!startDate || startDate > endDate) continue;
+
+    const scheduledDates = getUpcomingInjectionDates(schedule, startDate, endDate);
+    for (const scheduledDate of scheduledDates) {
+      const key = `${schedule.peptideId}|${scheduledDate}`;
+      const dayLogs = logsByPeptideDate.get(key) || [];
+      const hasFinalLog = dayLogs.some((log) => log.status !== "scheduled");
+      if (hasFinalLog) continue;
+
+      const scheduledDose = getScheduledDoseForDate(peptide, schedule, scheduledDate);
+      const scheduledDraw = getDrawForDose(
+        scheduledDose.doseValue,
+        scheduledDose.doseUnit,
+        peptide.concentrationMcgPerMl,
+        peptide.unitsPerMl
+      );
+      const scheduledPlaceholder = dayLogs.find((log) => log.status === "scheduled");
+      const actualDateTime = new Date(`${scheduledDate}T${schedule.injectionTime || "12:00"}`).toISOString();
+
+      if (scheduledPlaceholder) {
+        result.updatedLogs.push({
+          id: scheduledPlaceholder.id,
+          actualDateTime,
+          doseValue: scheduledDose.doseValue,
+          doseUnit: scheduledDose.doseUnit,
+          drawMl: scheduledDraw.drawMl,
+          drawUnits: scheduledDraw.drawUnits,
+        });
+      } else {
+        result.createdLogs.push({
+          id: crypto.randomUUID(),
+          peptideId: peptide.id,
+          vaultUserId: schedule.vaultUserId || peptide.vaultUserId,
+          openVialId: schedule.openVialId || peptide.openVialId || peptide.id,
+          peptideNameSnapshot: peptide.name,
+          scheduledDate,
+          actualDateTime,
+          doseValue: scheduledDose.doseValue,
+          doseUnit: scheduledDose.doseUnit,
+          drawMl: scheduledDraw.drawMl,
+          drawUnits: scheduledDraw.drawUnits,
+          status: "taken",
+          notes: pastTakenRepairCreatedNote,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
+      }
+    }
+  }
+
+  return result;
+};
+
+type HistoryDoseRepair = Array<{
+  id: string;
+  doseValue: number;
+  doseUnit: InjectionLog["doseUnit"];
+  drawMl: number;
+  drawUnits: number;
+}>;
+
+const buildHistoryDoseRepair = (
+  peptides: Peptide[],
+  schedules: PeptideSchedule[],
+  logs: InjectionLog[]
+): HistoryDoseRepair => {
+  const peptideById = new Map(peptides.map((peptide) => [peptide.id, peptide]));
+  const scheduleByPeptideId = makePreferredScheduleMap(schedules);
+  const repairableNotes = new Set([...pastTakenRepairNotes, autoLoggedScheduleNote]);
+
+  return logs.flatMap((log) => {
+    if (!repairableNotes.has(log.notes || "")) return [];
+    if (log.status !== "taken" && log.status !== "manual") return [];
+
+    const peptide = peptideById.get(log.peptideId);
+    const schedule = scheduleByPeptideId.get(log.peptideId);
+    if (!peptide || !schedule?.isActive) return [];
+
+    const occurrence = getUpcomingInjectionDates(schedule, log.scheduledDate, log.scheduledDate)[0];
+    if (occurrence !== log.scheduledDate) return [];
+
+    const scheduledDose = getScheduledDoseForDate(peptide, schedule, log.scheduledDate);
+    const scheduledDraw = getDrawForDose(
+      scheduledDose.doseValue,
+      scheduledDose.doseUnit,
+      peptide.concentrationMcgPerMl,
+      peptide.unitsPerMl
+    );
+    const isSameDose =
+      log.doseValue === scheduledDose.doseValue &&
+      log.doseUnit === scheduledDose.doseUnit &&
+      Math.abs(log.drawMl - scheduledDraw.drawMl) < 0.0001 &&
+      Math.abs(log.drawUnits - scheduledDraw.drawUnits) < 0.0001;
+
+    if (isSameDose) return [];
+
+    return [
+      {
+        id: log.id,
+        doseValue: scheduledDose.doseValue,
+        doseUnit: scheduledDose.doseUnit,
+        drawMl: scheduledDraw.drawMl,
+        drawUnits: scheduledDraw.drawUnits,
+      },
+    ];
+  });
+};
+
 export const CalendarPage: React.FC = () => {
   const navigate = useNavigate();
 
@@ -253,6 +418,7 @@ export const CalendarPage: React.FC = () => {
   const [googleSyncMessage, setGoogleSyncMessage] = useState("");
   const [isGoogleCalendarOpen, setIsGoogleCalendarOpen] = useState(false);
   const [isRepairingCalendar, setIsRepairingCalendar] = useState(false);
+  const [isRepairingPastCalendar, setIsRepairingPastCalendar] = useState(false);
   const [calendarRepairMessage, setCalendarRepairMessage] = useState("");
 
   // Keep track of the active month and year for monthly navigation
@@ -264,10 +430,7 @@ export const CalendarPage: React.FC = () => {
   const peptides = useLiveQuery(() => db.peptides.toArray());
   const schedules = useLiveQuery(() => db.schedules.toArray());
   const logs = useLiveQuery(() => db.injectionLogs.toArray());
-  const vaultUsers = useLiveQuery(async () => {
-    await ensureDefaultVaultUser();
-    return db.vaultUsers.orderBy("sortOrder").toArray();
-  });
+  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
   const settings = useLiveQuery(() => db.appSettings.toArray());
   const googleSyncedEventIds = useMemo(() => {
     const value = settings?.find((setting) => setting.key === googleSyncedEventIdsKey)?.value;
@@ -282,6 +445,10 @@ export const CalendarPage: React.FC = () => {
     const activeScheduledIds = new Set(schedules.filter((schedule) => schedule.isActive).map((schedule) => schedule.peptideId));
     return peptides.filter((peptide) => activeScheduledIds.has(peptide.id)).sort((a, b) => a.name.localeCompare(b.name));
   }, [peptides, schedules]);
+
+  useEffect(() => {
+    void ensureDefaultVaultUser();
+  }, []);
 
   useEffect(() => {
     if (googleSelectedPeptideIds.length === 0 && activeScheduledPeptides.length > 0) {
@@ -427,6 +594,135 @@ export const CalendarPage: React.FC = () => {
     }
   };
 
+  const handleRepairPastTakenCalendar = async () => {
+    setCalendarRepairMessage("");
+    if (!peptides || !schedules || !logs) return;
+
+    const endDate = addDays(today, -1);
+    const repair = buildPastTakenCalendarRepair(endDate, peptides, schedules, logs);
+    const repairCount = repair.createdLogs.length + repair.updatedLogs.length;
+    if (repairCount === 0) {
+      setCalendarRepairMessage("No past scheduled injections need a taken-log repair.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Mark ${repairCount} past scheduled injection${repairCount === 1 ? "" : "s"} as taken? Use this only for schedules that were already being followed before the dosing schedule change.`
+    );
+    if (!confirmed) return;
+
+    setIsRepairingPastCalendar(true);
+    try {
+      const nowIso = new Date().toISOString();
+      await db.transaction("rw", [db.injectionLogs], async () => {
+        if (repair.createdLogs.length > 0) {
+          await db.injectionLogs.bulkPut(repair.createdLogs);
+        }
+        for (const log of repair.updatedLogs) {
+          await db.injectionLogs.update(log.id, {
+            status: "taken",
+            actualDateTime: log.actualDateTime,
+            doseValue: log.doseValue,
+            doseUnit: log.doseUnit,
+            drawMl: log.drawMl,
+            drawUnits: log.drawUnits,
+            notes: pastTakenRepairConvertedNote,
+            updatedAt: nowIso,
+          });
+        }
+      });
+      setCalendarRepairMessage(
+        `Marked ${repairCount} past scheduled injection${repairCount === 1 ? "" : "s"} as taken.`
+      );
+    } catch (error) {
+      setCalendarRepairMessage(error instanceof Error ? error.message : "Past dosing schedule repair failed.");
+    } finally {
+      setIsRepairingPastCalendar(false);
+    }
+  };
+
+  const handleRepairHistoryDoseAmounts = async () => {
+    setCalendarRepairMessage("");
+    if (!peptides || !schedules || !logs) return;
+
+    const repairLogs = buildHistoryDoseRepair(peptides, schedules, logs);
+    if (repairLogs.length === 0) {
+      setCalendarRepairMessage("History dose amounts already match the current repaired schedules.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Update ${repairLogs.length} repaired history log${repairLogs.length === 1 ? "" : "s"} to match the current dosing schedule amounts?`
+    );
+    if (!confirmed) return;
+
+    setIsRepairingPastCalendar(true);
+    try {
+      const nowIso = new Date().toISOString();
+      await db.transaction("rw", [db.injectionLogs], async () => {
+        for (const log of repairLogs) {
+          await db.injectionLogs.update(log.id, {
+            doseValue: log.doseValue,
+            doseUnit: log.doseUnit,
+            drawMl: log.drawMl,
+            drawUnits: log.drawUnits,
+            updatedAt: nowIso,
+          });
+        }
+      });
+      setCalendarRepairMessage(
+        `Updated ${repairLogs.length} repaired history dose amount${repairLogs.length === 1 ? "" : "s"}.`
+      );
+    } catch (error) {
+      setCalendarRepairMessage(error instanceof Error ? error.message : "History dose repair failed.");
+    } finally {
+      setIsRepairingPastCalendar(false);
+    }
+  };
+
+  const handleUndoPastTakenCalendarRepair = async () => {
+    setCalendarRepairMessage("");
+    if (!logs) return;
+
+    const repairLogs = logs.filter((log) => pastTakenRepairNotes.has(log.notes || ""));
+    if (repairLogs.length === 0) {
+      setCalendarRepairMessage("No past schedule repair logs were found to undo.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Undo ${repairLogs.length} past repair log${repairLogs.length === 1 ? "" : "s"}? This will remove repair-created logs and turn repaired scheduled placeholders back into scheduled items.`
+    );
+    if (!confirmed) return;
+
+    setIsRepairingPastCalendar(true);
+    try {
+      const nowIso = new Date().toISOString();
+      await db.transaction("rw", [db.injectionLogs], async () => {
+        for (const log of repairLogs) {
+          if (
+            log.notes === pastTakenRepairCreatedNote ||
+            (log.notes === pastTakenRepairNote && log.createdAt === log.updatedAt)
+          ) {
+            await db.injectionLogs.delete(log.id);
+          } else {
+            await db.injectionLogs.update(log.id, {
+              status: "scheduled",
+              actualDateTime: undefined,
+              notes: "Reverted past dosing schedule repair.",
+              updatedAt: nowIso,
+            });
+          }
+        }
+      });
+      setCalendarRepairMessage(`Undid ${repairLogs.length} past repair log${repairLogs.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setCalendarRepairMessage(error instanceof Error ? error.message : "Undo past repair failed.");
+    } finally {
+      setIsRepairingPastCalendar(false);
+    }
+  };
+
   // Generate grid based on view mode
   const daysGrid = useMemo(
     () =>
@@ -499,7 +795,7 @@ export const CalendarPage: React.FC = () => {
       // Update existing log
       await db.injectionLogs.update(event.log.id, {
         status,
-        actualDateTime: new Date().toISOString(),
+        actualDateTime: status === "taken" ? new Date().toISOString() : undefined,
         updatedAt: new Date().toISOString(),
       });
     } else {
@@ -523,7 +819,7 @@ export const CalendarPage: React.FC = () => {
         openVialId: event.peptide.openVialId || event.peptide.id,
         peptideNameSnapshot: event.peptide.name,
         scheduledDate: selectedDate,
-        actualDateTime: new Date().toISOString(),
+        actualDateTime: status === "taken" ? new Date().toISOString() : undefined,
         doseValue: scheduledDose.doseValue,
         doseUnit: scheduledDose.doseUnit,
         drawMl: draw.drawMl,
@@ -722,16 +1018,49 @@ export const CalendarPage: React.FC = () => {
           <Card style={{ marginBottom: "16px" }}>
             <h2 style={{ fontSize: "1.05rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
               <RefreshCw size={18} style={{ color: "var(--color-primary)" }} />
-              Repair Upcoming Calendar
+              Calendar Repair
             </h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginBottom: "12px", lineHeight: 1.45 }}>
+              Upcoming repair restores future schedule placeholders. Past repair creates real taken logs and can change next-dose and vial remaining calculations.
+            </p>
             <Button
               variant="secondary"
               fullWidth
               onClick={handleRepairUpcomingCalendar}
-              disabled={isRepairingCalendar || !peptides || !schedules || !logs}
+              disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
             >
               {isRepairingCalendar ? <Loader2 size={16} /> : <RefreshCw size={16} />}
               {isRepairingCalendar ? "Repairing..." : "Repair Upcoming Calendar"}
+            </Button>
+            <Button
+              variant="secondary"
+              fullWidth
+              onClick={handleRepairPastTakenCalendar}
+              disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
+              style={{ marginTop: "10px" }}
+            >
+              {isRepairingPastCalendar ? <Loader2 size={16} /> : <Check size={16} />}
+              {isRepairingPastCalendar ? "Repairing..." : "Mark Past Schedule Taken"}
+            </Button>
+            <Button
+              variant="ghost"
+              fullWidth
+              onClick={handleUndoPastTakenCalendarRepair}
+              disabled={isRepairingCalendar || isRepairingPastCalendar || !logs}
+              style={{ marginTop: "8px" }}
+            >
+              <X size={16} />
+              Undo Past Repair
+            </Button>
+            <Button
+              variant="secondary"
+              fullWidth
+              onClick={handleRepairHistoryDoseAmounts}
+              disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
+              style={{ marginTop: "8px" }}
+            >
+              {isRepairingPastCalendar ? <Loader2 size={16} /> : <RefreshCw size={16} />}
+              Repair History Dose Amounts
             </Button>
             {calendarRepairMessage && (
               <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "10px", lineHeight: 1.45 }}>

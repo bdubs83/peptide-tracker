@@ -33,6 +33,7 @@ const getStandardSyringeOption = (size: number) => {
   if (size === 0.3) return "0.3";
   if (size === 0.5) return "0.5";
   if (size === 1) return "1.0";
+  if (size === 3) return "3.0";
   return null;
 };
 
@@ -313,6 +314,7 @@ export const CalculatorPage: React.FC = () => {
                 { value: "0.3", label: "0.3 mL" },
                 { value: "0.5", label: "0.5 mL" },
                 { value: "1.0", label: "1.0 mL" },
+                { value: "3.0", label: "3.0 mL" },
                 { value: "custom", label: "Custom" },
               ]}
             />

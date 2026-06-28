@@ -9,6 +9,8 @@ import { PeptideInfoPage } from "../features/vault/PeptideInfoPage";
 import { ProfilePage } from "../features/vault/ProfilePage";
 import { GuidesPage } from "../features/guides/GuidesPage";
 import { ToolsPage } from "../features/tools/ToolsPage";
+import { ResourcesPage } from "../features/resources/ResourcesPage";
+import { ExportCenterPage } from "../features/exports/ExportCenterPage";
 
 export const AppRoutes: React.FC = () => {
   return (
@@ -24,6 +26,8 @@ export const AppRoutes: React.FC = () => {
       <Route path="/peptides" element={<PeptidesPage />} />
       <Route path="/peptides/:name" element={<PeptideInfoPage />} />
       <Route path="/guides" element={<GuidesPage />} />
+      <Route path="/resources" element={<ResourcesPage />} />
+      <Route path="/exports" element={<ExportCenterPage />} />
       <Route path="/profile" element={<ProfilePage />} />
       <Route path="/settings" element={<ProfilePage />} />
       <Route path="*" element={<Navigate to="/calculator" replace />} />

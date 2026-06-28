@@ -9,6 +9,7 @@ import {
 import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
 import type { InjectionLog } from "../../types/injectionLog";
+import { makePreferredScheduleMap } from "../../utils/scheduleUtils";
 
 export interface CalendarDay {
   dateStr: string; // YYYY-MM-DD
@@ -35,6 +36,7 @@ const getStatusForDate = (
     if (log.status === "skipped") return "skipped";
     if (log.status === "missed") return "missed";
     if (log.status === "scheduled") {
+      if (!scheduled) return "none";
       if (dateStr < todayStr) return "missed";
       if (dateStr === todayStr) return "due";
       return "upcoming";
@@ -46,6 +48,23 @@ const getStatusForDate = (
   if (dateStr === todayStr) return "due";
   return "upcoming";
 };
+
+const getLogStatusPriority = (log: InjectionLog) => {
+  if (log.status === "taken" || log.status === "manual") return 5;
+  if (log.status === "skipped") return 4;
+  if (log.status === "missed") return 3;
+  if (log.status === "scheduled") return 1;
+  return 0;
+};
+
+const getBestLogForDate = (logs: InjectionLog[]) =>
+  logs.reduce<InjectionLog | undefined>((best, log) => {
+    if (!best) return log;
+    const priorityDiff = getLogStatusPriority(log) - getLogStatusPriority(best);
+    if (priorityDiff > 0) return log;
+    if (priorityDiff < 0) return best;
+    return (log.updatedAt || log.createdAt || "") > (best.updatedAt || best.createdAt || "") ? log : best;
+  }, undefined);
 
 const getDateRange = (startDateStr: string, endDateStr: string) => {
   const dates: string[] = [];
@@ -149,11 +168,12 @@ export function getEventsForDay(
 ): DayEvent[] {
   const todayStr = getLocalDateString();
   const events: DayEvent[] = [];
+  const scheduleByPeptideId = makePreferredScheduleMap(schedules);
 
   peptides.forEach((peptide) => {
-    const schedule = schedules.find((s) => s.peptideId === peptide.id);
-    const log = logs.find(
-      (l) => l.peptideId === peptide.id && l.scheduledDate === dateStr
+    const schedule = scheduleByPeptideId.get(peptide.id);
+    const log = getBestLogForDate(
+      logs.filter((l) => l.peptideId === peptide.id && l.scheduledDate === dateStr)
     );
 
     const scheduled = schedule
@@ -191,19 +211,19 @@ export function getEventsForDateRange(
 
   const todayStr = getLocalDateString();
   const dates = getDateRange(startDateStr, endDateStr);
-  const scheduleByPeptideId = new Map<string, PeptideSchedule>();
+  const scheduleByPeptideId = makePreferredScheduleMap(schedules);
   const logsByPeptideDate = new Map<string, InjectionLog>();
-
-  for (const schedule of schedules) {
-    if (!scheduleByPeptideId.has(schedule.peptideId)) {
-      scheduleByPeptideId.set(schedule.peptideId, schedule);
-    }
-  }
 
   for (const log of logs) {
     if (log.scheduledDate < startDateStr || log.scheduledDate > endDateStr) continue;
     const key = `${log.peptideId}|${log.scheduledDate}`;
-    if (!logsByPeptideDate.has(key)) {
+    const existing = logsByPeptideDate.get(key);
+    const priorityDiff = existing ? getLogStatusPriority(log) - getLogStatusPriority(existing) : 1;
+    const isNewerTie =
+      existing &&
+      priorityDiff === 0 &&
+      (log.updatedAt || log.createdAt || "") > (existing.updatedAt || existing.createdAt || "");
+    if (!existing || priorityDiff > 0 || isNewerTie) {
       logsByPeptideDate.set(key, log);
     }
   }

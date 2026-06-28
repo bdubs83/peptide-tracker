@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../db/db";
@@ -27,6 +28,7 @@ import {
   formatMcgPerMl,
   formatDose,
 } from "../../utils/formatting";
+import { getPreferredSchedule } from "../../utils/scheduleUtils";
 import { normalizeDoseToMcg } from "../calculator/calculatorUtils";
 import {
   ChevronLeft,
@@ -48,6 +50,7 @@ type LogStatus = "taken" | "skipped" | "missed" | "manual";
 type InjectionSiteSide = "front" | "back";
 type DoseScheduleRow = {
   id: string;
+  startDate: string;
   durationType: DoseScheduleDurationType;
   durationValue: string;
   intervalDays: string;
@@ -78,6 +81,7 @@ const isDoseUnit = (value: string): value is DoseUnit => value === "mcg" || valu
 
 const makeDoseScheduleRow = (doseUnit: DoseUnit = "mg"): DoseScheduleRow => ({
   id: crypto.randomUUID(),
+  startDate: "",
   durationType: "weeks",
   durationValue: "",
   intervalDays: "7",
@@ -92,6 +96,7 @@ const getDefaultDoseScheduleRows = (doseUnit: DoseUnit): DoseScheduleRow[] => [
 
 const phaseToRow = (phase: DoseSchedulePhase): DoseScheduleRow => ({
   id: phase.id,
+  startDate: phase.startDate || "",
   durationType: phase.durationType,
   durationValue: phase.durationValue ? String(phase.durationValue) : "",
   intervalDays: phase.intervalDays ? String(phase.intervalDays) : "7",
@@ -183,22 +188,24 @@ const formatLogTime = (iso?: string) => {
 };
 
 const injectionSites: InjectionSite[] = [
-  { id: "front-left-upper-arm", label: "Front left upper arm", side: "front", x: 18, y: 34 },
-  { id: "front-right-upper-arm", label: "Front right upper arm", side: "front", x: 82, y: 34 },
-  { id: "front-left-chest", label: "Front left chest", side: "front", x: 38, y: 34 },
-  { id: "front-right-chest", label: "Front right chest", side: "front", x: 62, y: 34 },
-  { id: "front-left-abdomen", label: "Front left abdomen", side: "front", x: 40, y: 52 },
-  { id: "front-right-abdomen", label: "Front right abdomen", side: "front", x: 60, y: 52 },
-  { id: "front-left-thigh", label: "Front left thigh", side: "front", x: 40, y: 72 },
-  { id: "front-right-thigh", label: "Front right thigh", side: "front", x: 60, y: 72 },
-  { id: "back-left-upper-arm", label: "Back left upper arm", side: "back", x: 18, y: 34 },
-  { id: "back-right-upper-arm", label: "Back right upper arm", side: "back", x: 82, y: 34 },
-  { id: "back-left-forearm", label: "Back left lower arm", side: "back", x: 28, y: 54 },
-  { id: "back-right-forearm", label: "Back right lower arm", side: "back", x: 72, y: 54 },
-  { id: "back-left-hip", label: "Back left hip", side: "back", x: 40, y: 62 },
-  { id: "back-right-hip", label: "Back right hip", side: "back", x: 60, y: 62 },
-  { id: "back-left-thigh", label: "Back left thigh", side: "back", x: 38, y: 78 },
-  { id: "back-right-thigh", label: "Back right thigh", side: "back", x: 62, y: 78 },
+  { id: "front-left-upper-arm", label: "Left upper arm", side: "front", x: 30, y: 26 },
+  { id: "front-right-upper-arm", label: "Right upper arm", side: "front", x: 70, y: 26 },
+  { id: "front-left-upper-abdomen", label: "Left upper abdomen", side: "front", x: 45, y: 30 },
+  { id: "front-right-upper-abdomen", label: "Right upper abdomen", side: "front", x: 55, y: 30 },
+  { id: "front-left-lower-abdomen", label: "Left lower abdomen", side: "front", x: 45, y: 37 },
+  { id: "front-right-lower-abdomen", label: "Right lower abdomen", side: "front", x: 55, y: 37 },
+  { id: "front-left-outer-thigh", label: "Left outer thigh", side: "front", x: 37, y: 51 },
+  { id: "front-left-inner-thigh", label: "Left inner thigh", side: "front", x: 45, y: 51 },
+  { id: "front-right-inner-thigh", label: "Right inner thigh", side: "front", x: 55, y: 51 },
+  { id: "front-right-outer-thigh", label: "Right outer thigh", side: "front", x: 63, y: 51 },
+  { id: "back-left-tricep", label: "Left back of tricep", side: "back", x: 30, y: 26 },
+  { id: "back-right-tricep", label: "Right back of tricep", side: "back", x: 70, y: 26 },
+  { id: "back-left-hip", label: "Left hip", side: "back", x: 43, y: 40 },
+  { id: "back-right-hip", label: "Right hip", side: "back", x: 57, y: 40 },
+  { id: "back-left-glute", label: "Left glute", side: "back", x: 45, y: 46 },
+  { id: "back-right-glute", label: "Right glute", side: "back", x: 55, y: 46 },
+  { id: "back-left-thigh", label: "Left back thigh", side: "back", x: 44, y: 54 },
+  { id: "back-right-thigh", label: "Right back thigh", side: "back", x: 56, y: 54 },
 ];
 
 const weekdays = [
@@ -223,33 +230,22 @@ const buildUpdatedSchedule = (
 });
 
 const BodyOutline: React.FC<{ side: InjectionSiteSide }> = ({ side }) => (
-  <svg viewBox="0 0 120 220" aria-hidden="true" style={{ width: "100%", display: "block" }}>
-    <path
-      d="M50 28 C47 15 51 6 60 6 C69 6 73 15 70 28 L73 43 C88 47 99 53 101 62 C104 78 105 101 99 120 C96 129 87 128 86 118 C84 101 83 84 78 72 L77 126 C77 140 75 148 72 158 L69 209 L82 209 M50 28 L47 43 C32 47 21 53 19 62 C16 78 15 101 21 120 C24 129 33 128 34 118 C36 101 37 84 42 72 L43 126 C43 140 45 148 48 158 L51 209 L38 209 M48 158 C51 149 55 143 60 143 C65 143 69 149 72 158"
-      fill="none"
-      stroke="rgba(129, 103, 255, 0.68)"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    {side === "front" ? (
-      <path
-        d="M60 83 L60 115 M43 126 C48 130 72 130 77 126"
-        fill="none"
-        stroke="rgba(129, 103, 255, 0.45)"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    ) : (
-      <path
-        d="M60 44 L60 123 M41 126 C48 130 72 130 79 126 M45 69 C41 82 41 98 43 111 M75 69 C79 82 79 98 77 111"
-        fill="none"
-        stroke="rgba(129, 103, 255, 0.45)"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    )}
-  </svg>
+  <img
+    src={`/body-map/${side}.png`}
+    alt=""
+    aria-hidden="true"
+    style={{
+      width: "auto",
+      height: "100%",
+      maxWidth: "100%",
+      display: "block",
+      margin: "0 auto",
+      objectFit: "contain",
+      filter: "drop-shadow(0 12px 18px rgba(0, 0, 0, 0.45))",
+      pointerEvents: "none",
+      userSelect: "none",
+    }}
+  />
 );
 
 const InjectionSitePicker: React.FC<{
@@ -283,7 +279,20 @@ const InjectionSitePicker: React.FC<{
             >
               {side}
             </div>
-            <div style={{ position: "relative", maxWidth: "160px", margin: "0 auto" }}>
+            <div
+              style={{
+                position: "relative",
+                maxWidth: "178px",
+                height: "326px",
+                margin: "0 auto",
+                padding: "8px 8px 10px",
+                borderRadius: "16px",
+                border: "1px solid var(--border-color)",
+                background:
+                  "radial-gradient(circle at 50% 18%, rgba(99, 102, 241, 0.16), transparent 42%), rgba(255, 255, 255, 0.025)",
+                boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+              }}
+            >
               <BodyOutline side={side} />
               {injectionSites
                 .filter((site) => site.side === side)
@@ -301,14 +310,14 @@ const InjectionSitePicker: React.FC<{
                         left: `${site.x}%`,
                         top: `${site.y}%`,
                         transform: "translate(-50%, -50%)",
-                        width: selected ? "24px" : "18px",
-                        height: selected ? "24px" : "18px",
+                        width: selected ? "22px" : "16px",
+                        height: selected ? "22px" : "16px",
                         borderRadius: "50%",
-                        border: selected ? "3px solid rgba(255,255,255,0.9)" : "1px solid rgba(255,255,255,0.25)",
-                        background: selected ? "var(--color-success)" : "rgba(20, 184, 166, 0.75)",
+                        border: selected ? "3px solid rgba(255,255,255,0.92)" : "1px solid rgba(255,255,255,0.48)",
+                        background: selected ? "var(--color-success)" : "rgba(20, 184, 166, 0.86)",
                         boxShadow: selected
-                          ? "0 0 0 4px rgba(16, 185, 129, 0.25)"
-                          : "0 0 0 3px rgba(20, 184, 166, 0.08)",
+                          ? "0 0 0 5px rgba(16, 185, 129, 0.24), 0 6px 14px rgba(0, 0, 0, 0.28)"
+                          : "0 0 0 4px rgba(20, 184, 166, 0.1), 0 4px 10px rgba(0, 0, 0, 0.2)",
                         cursor: "pointer",
                         transition: "all var(--transition-fast)",
                       }}
@@ -362,7 +371,8 @@ export const PeptideDetailPage: React.FC = () => {
   const data = useLiveQuery(async () => {
     if (!id) return null;
     const peptide = await db.peptides.get(id);
-    const schedule = await db.schedules.where("peptideId").equals(id).first();
+    const peptideSchedules = await db.schedules.where("peptideId").equals(id).toArray();
+    const schedule = getPreferredSchedule(peptideSchedules, id);
     const peptides = await db.peptides.toArray();
     const schedules = await db.schedules.toArray();
     const logsList = await db.injectionLogs
@@ -403,6 +413,7 @@ export const PeptideDetailPage: React.FC = () => {
 
   const { peptide, schedule, peptides, schedules, logsList, allLogs, settings } = data;
   const currentVialLogs = getCurrentVialLogs(peptide, allLogs);
+  const historyLogs = logsList.filter((log) => log.status !== "scheduled");
   const syringeDisplayMode = settings?.find((item) => item.key === "pref_displayMode")?.value === "mL" ? "mL" : "units";
 
   // Calculate schedule projections
@@ -486,6 +497,7 @@ export const PeptideDetailPage: React.FC = () => {
     e.preventDefault();
     const selectedInjectionSite = injectionSites.find((site) => site.id === selectedInjectionSiteId);
     const nowIso = new Date().toISOString();
+    const isActualInjection = logStatus === "taken" || logStatus === "manual";
     const scheduledDose = schedule
       ? getScheduledDoseForDate(peptide, schedule, logDate)
       : { doseValue: peptide.desiredDoseValue, doseUnit: peptide.desiredDoseUnit };
@@ -503,15 +515,15 @@ export const PeptideDetailPage: React.FC = () => {
       openVialId: peptide.openVialId || peptide.id,
       peptideNameSnapshot: peptide.name,
       scheduledDate: logDate,
-      actualDateTime: buildLocalDateTimeIso(logDate, logTime),
+      actualDateTime: isActualInjection ? buildLocalDateTimeIso(logDate, logTime) : undefined,
       doseValue: scheduledDose.doseValue,
       doseUnit: scheduledDose.doseUnit,
       drawMl: draw.drawMl,
       drawUnits: draw.drawUnits,
       status: logStatus,
-      injectionSiteId: selectedInjectionSite?.id,
-      injectionSiteLabel: selectedInjectionSite?.label,
-      injectionSiteSide: selectedInjectionSite?.side,
+      injectionSiteId: isActualInjection ? selectedInjectionSite?.id : undefined,
+      injectionSiteLabel: isActualInjection ? selectedInjectionSite?.label : undefined,
+      injectionSiteSide: isActualInjection ? selectedInjectionSite?.side : undefined,
       notes: logNotes.trim() || undefined,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -689,8 +701,13 @@ export const PeptideDetailPage: React.FC = () => {
         alert("Select at least one day of the week for any Days of Wk dosing line.");
         return;
       }
+      if (index > 0 && row.startDate && row.startDate < doseScheduleStartDate) {
+        alert("A phase start date cannot be before the first phase start date.");
+        return;
+      }
       phases.push({
         id: row.id,
+        startDate: index > 0 && row.startDate ? row.startDate : undefined,
         durationType: row.durationType,
         durationValue: isLast ? undefined : duration,
         intervalDays: row.durationType === "injections" ? interval : undefined,
@@ -1037,16 +1054,6 @@ export const PeptideDetailPage: React.FC = () => {
 
           {isDosingScheduleOpen && (
             <>
-              <div style={{ marginBottom: "12px" }}>
-                <Input
-                  label="First Phase Start Date"
-                  type="date"
-                  value={doseScheduleStartDate}
-                  onChange={(e) => setDoseScheduleStartDate(e.target.value)}
-                  required
-                />
-              </div>
-
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {doseScheduleRows.map((row, index) => {
                   const isLast = index === doseScheduleRows.length - 1;
@@ -1069,7 +1076,9 @@ export const PeptideDetailPage: React.FC = () => {
                         style={{
                           gridColumn: "1 / -1",
                           display: "grid",
-                          gridTemplateColumns: canRemovePhase ? "minmax(0, 1fr) 42px" : "1fr",
+                          gridTemplateColumns: canRemovePhase
+                            ? "minmax(0, 1fr) minmax(0, 1fr) 42px"
+                            : "minmax(0, 1fr) minmax(0, 1fr)",
                           gap: "8px",
                           alignItems: "end",
                         }}
@@ -1093,6 +1102,19 @@ export const PeptideDetailPage: React.FC = () => {
                             ]}
                           />
                         </div>
+                        <Input
+                          label={`Phase ${index + 1} Start`}
+                          type="date"
+                          value={index === 0 ? doseScheduleStartDate : row.startDate}
+                          onChange={(e) => {
+                            if (index === 0) {
+                              setDoseScheduleStartDate(e.target.value);
+                            } else {
+                              updateDoseScheduleRow(row.id, { startDate: e.target.value });
+                            }
+                          }}
+                          required={index === 0}
+                        />
                         {canRemovePhase && (
                           <button
                             type="button"
@@ -1298,7 +1320,7 @@ export const PeptideDetailPage: React.FC = () => {
         <Card style={{ marginBottom: "20px" }}>
           <SectionToggle
             title="Injection History"
-            description={`${logsList.length} log${logsList.length === 1 ? "" : "s"}`}
+            description={`${historyLogs.length} log${historyLogs.length === 1 ? "" : "s"}`}
             isOpen={isInjectionHistoryOpen}
             onToggle={() => setIsInjectionHistoryOpen((open) => !open)}
             action={
@@ -1329,13 +1351,13 @@ export const PeptideDetailPage: React.FC = () => {
             }
           />
 
-          {isInjectionHistoryOpen && logsList.length === 0 ? (
+          {isInjectionHistoryOpen && historyLogs.length === 0 ? (
             <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", textAlign: "center", padding: "20px 0" }}>
               No history logged yet.
             </p>
           ) : isInjectionHistoryOpen ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              {logsList.map((log) => (
+              {historyLogs.map((log) => (
                 <div
                   key={log.id}
                   style={{
@@ -1396,9 +1418,16 @@ export const PeptideDetailPage: React.FC = () => {
       </div>
 
       {/* Log Injection Modal Dialog */}
-      {isLogModalOpen && (
+      {isLogModalOpen && createPortal(
         <div className="modal-overlay">
-          <div className="modal-content">
+          <div
+            className="modal-content"
+            style={{
+              maxWidth: "620px",
+              width: "min(620px, calc(100vw - 32px))",
+              maxHeight: "calc(100dvh - 24px)",
+            }}
+          >
             <h3 style={{ fontSize: "1.2rem", marginBottom: "16px" }}>Log Injection</h3>
             
             <form onSubmit={handleLogSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -1415,7 +1444,8 @@ export const PeptideDetailPage: React.FC = () => {
                   type="time"
                   value={logTime}
                   onChange={(e) => setLogTime(e.target.value)}
-                  required
+                  required={logStatus === "taken" || logStatus === "manual"}
+                  disabled={logStatus === "skipped" || logStatus === "missed"}
                 />
               </div>
 
@@ -1462,10 +1492,11 @@ export const PeptideDetailPage: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {pendingPastDoseSave && (
+      {pendingPastDoseSave && createPortal(
         <div className="modal-overlay">
           <div className="modal-content">
             <h3 style={{ fontSize: "1.2rem", marginBottom: "10px" }}>Confirm Past Doses</h3>
@@ -1494,7 +1525,8 @@ export const PeptideDetailPage: React.FC = () => {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

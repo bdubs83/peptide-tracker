@@ -196,12 +196,14 @@ export async function compareLocalAndCloudData(user: User): Promise<CloudCollect
 }
 
 export async function uploadLocalDataToCloud(user: User): Promise<void> {
+  const uploadStartedAt = new Date().toISOString();
   await setDoc(
     userDoc(user),
     {
       email: user.email || "",
       displayName: user.displayName || "",
-      lastCloudBackupAt: serverTimestamp(),
+      uploadStatus: "inProgress",
+      uploadStartedAt,
       schemaVersion: 1,
     },
     { merge: true }
@@ -218,10 +220,28 @@ export async function uploadLocalDataToCloud(user: User): Promise<void> {
     }
   }
 
+  await setDoc(
+    userDoc(user),
+    {
+      email: user.email || "",
+      displayName: user.displayName || "",
+      uploadStatus: "completed",
+      uploadStartedAt,
+      lastCloudBackupAt: serverTimestamp(),
+      schemaVersion: 1,
+    },
+    { merge: true }
+  );
+
   await db.appSettings.put({ key: "lastCloudBackupAt", value: new Date().toISOString() });
 }
 
 export async function restoreCloudDataToLocal(user: User): Promise<void> {
+  const profile = await getDoc(userDoc(user));
+  if (profile.exists() && profile.data().uploadStatus === "inProgress") {
+    throw new Error("The account copy has an unfinished upload. Upload a clean device copy before restoring.");
+  }
+
   const cloudData = new Map<SyncCollectionName, SyncRecord[]>();
 
   for (const collectionName of collectionNames) {
