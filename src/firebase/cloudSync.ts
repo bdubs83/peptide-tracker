@@ -73,6 +73,8 @@ export const lastAutoSyncErrorKey = "lastAutoSyncError";
 export const lastAutoSyncConflictsKey = "lastAutoSyncConflicts";
 export const lastAutoSyncResultKey = "lastAutoSyncResult";
 export const lastAutoSyncStatusKey = "lastAutoSyncStatus";
+export const lastKnownCloudReplaceAtKey = "lastKnownCloudReplaceAt";
+export const cloudReplaceAtKey = "cloudReplaceAt";
 const localOnlyAppSettingKeys = new Set([
   autoSyncEnabledKey,
   lastAutoSyncAtKey,
@@ -80,6 +82,7 @@ const localOnlyAppSettingKeys = new Set([
   lastAutoSyncConflictsKey,
   lastAutoSyncResultKey,
   lastAutoSyncStatusKey,
+  lastKnownCloudReplaceAtKey,
 ]);
 
 const collectionNames: SyncCollectionName[] = [
@@ -146,6 +149,18 @@ const getCloudRecords = async (user: User, collectionName: SyncCollectionName): 
   return getSyncableRecords(
     collectionName,
     snapshot.docs.map((item) => removeSyncMetadata(item.data() as CloudRecord))
+  );
+};
+
+const normalizeForComparison = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(normalizeForComparison);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([key, entryValue]) => [key, normalizeForComparison(entryValue)])
   );
 };
 
@@ -265,8 +280,30 @@ const getRecordUpdatedAt = (record: SyncRecord) => {
   return "";
 };
 
+const getRecordUpdatedAtMs = (record: SyncRecord) => {
+  const updatedAt = getRecordUpdatedAt(record);
+  const parsed = Date.parse(updatedAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const recordsDiffer = (left: SyncRecord, right: SyncRecord) => {
-  return JSON.stringify(removeUndefinedFields(left)) !== JSON.stringify(removeUndefinedFields(right));
+  return JSON.stringify(normalizeForComparison(left)) !== JSON.stringify(normalizeForComparison(right));
+};
+
+const getProfileCloudReplaceAt = (value: unknown) => {
+  if (!value || typeof value !== "object") return "";
+  const cloudReplaceAt = (value as Record<string, unknown>)[cloudReplaceAtKey];
+  return typeof cloudReplaceAt === "string" ? cloudReplaceAt : "";
+};
+
+const getLastKnownCloudReplaceAt = async () => {
+  const row = await db.appSettings.get(lastKnownCloudReplaceAtKey);
+  return typeof row?.value === "string" ? row.value : "";
+};
+
+const getLocalOnlyAppSettings = async () => {
+  const settings = await db.appSettings.toArray();
+  return settings.filter((setting) => localOnlyAppSettingKeys.has(setting.key));
 };
 
 const serializeConflicts = (conflicts: AutoSyncConflict[]) => JSON.stringify(conflicts);
@@ -308,6 +345,15 @@ export async function runAutoSync(user: User): Promise<AutoSyncResult> {
     throw new Error("The account copy has an unfinished upload. Finish or repair that before Auto Sync runs.");
   }
 
+  const cloudReplaceAt = profile.exists() ? getProfileCloudReplaceAt(profile.data()) : "";
+  const lastKnownCloudReplaceAt = await getLastKnownCloudReplaceAt();
+  if (cloudReplaceAt && cloudReplaceAt !== lastKnownCloudReplaceAt) {
+    await restoreCloudDataToLocal(user);
+    await putAppSetting(lastAutoSyncAtKey, new Date().toISOString());
+    await putAppSetting(lastAutoSyncConflictsKey, serializeConflicts([]));
+    return result;
+  }
+
   for (const collectionName of collectionNames) {
     const localRecords = getSyncableRecords(collectionName, await getLocalRecords(collectionName));
     const cloudRecords = await getCloudRecords(user, collectionName);
@@ -336,11 +382,13 @@ export async function runAutoSync(user: User): Promise<AutoSyncResult> {
 
       const localUpdatedAt = getRecordUpdatedAt(localRecord);
       const cloudUpdatedAt = getRecordUpdatedAt(cloudRecord);
+      const localUpdatedAtMs = getRecordUpdatedAtMs(localRecord);
+      const cloudUpdatedAtMs = getRecordUpdatedAtMs(cloudRecord);
 
-      if (localUpdatedAt > cloudUpdatedAt) {
+      if (localUpdatedAtMs > cloudUpdatedAtMs) {
         await writeCloudRecord(user, collectionName, localRecord);
         result.uploaded += 1;
-      } else if (cloudUpdatedAt > localUpdatedAt) {
+      } else if (cloudUpdatedAtMs > localUpdatedAtMs) {
         recordsToPutLocal.push(cloudRecord);
         result.downloaded += 1;
       } else {
@@ -388,11 +436,22 @@ export async function resolveAutoSyncConflict(
   await putAppSetting(lastAutoSyncStatusKey, remainingConflicts.length > 0 ? "needsReview" : "idle");
 }
 
-export function subscribeToCloudSyncChanges(user: User, onChange: () => void): Unsubscribe {
+export function subscribeToCloudSyncChanges(
+  user: User,
+  onChange: () => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
   const unsubscribers = collectionNames.map((collectionName) =>
-    onSnapshot(userCollection(user, collectionName), () => {
-      onChange();
-    })
+    onSnapshot(
+      userCollection(user, collectionName),
+      (snapshot) => {
+        if (snapshot.metadata.hasPendingWrites) return;
+        onChange();
+      },
+      (error) => {
+        onError?.(error);
+      }
+    )
   );
 
   return () => {
@@ -409,6 +468,7 @@ export async function uploadLocalDataToCloud(user: User): Promise<void> {
       displayName: user.displayName || "",
       uploadStatus: "inProgress",
       uploadStartedAt,
+      [cloudReplaceAtKey]: uploadStartedAt,
       schemaVersion: 1,
     },
     { merge: true }
@@ -429,6 +489,7 @@ export async function uploadLocalDataToCloud(user: User): Promise<void> {
       displayName: user.displayName || "",
       uploadStatus: "completed",
       uploadStartedAt,
+      [cloudReplaceAtKey]: uploadStartedAt,
       lastCloudBackupAt: serverTimestamp(),
       schemaVersion: 1,
     },
@@ -436,6 +497,7 @@ export async function uploadLocalDataToCloud(user: User): Promise<void> {
   );
 
   await putAppSetting("lastCloudBackupAt", new Date().toISOString());
+  await putAppSetting(lastKnownCloudReplaceAtKey, uploadStartedAt);
 }
 
 export async function restoreCloudDataToLocal(user: User): Promise<void> {
@@ -444,6 +506,8 @@ export async function restoreCloudDataToLocal(user: User): Promise<void> {
     throw new Error("The account copy has an unfinished upload. Upload a clean device copy before restoring.");
   }
 
+  const cloudReplaceAt = profile.exists() ? getProfileCloudReplaceAt(profile.data()) : "";
+  const localOnlySettings = await getLocalOnlyAppSettings();
   const cloudData = new Map<SyncCollectionName, SyncRecord[]>();
 
   for (const collectionName of collectionNames) {
@@ -458,20 +522,36 @@ export async function restoreCloudDataToLocal(user: User): Promise<void> {
         await clearLocalCollection(collectionName);
         await putLocalRecords(collectionName, cloudData.get(collectionName) || []);
       }
+      if (localOnlySettings.length > 0) {
+        await db.appSettings.bulkPut(localOnlySettings);
+      }
       await putAppSetting("lastCloudRestoreAt", new Date().toISOString());
+      if (cloudReplaceAt) {
+        await putAppSetting(lastKnownCloudReplaceAtKey, cloudReplaceAt);
+      }
     }
   );
 }
 
 export async function mergeCloudDataIntoLocal(user: User): Promise<void> {
+  const profile = await getDoc(userDoc(user));
+  const cloudReplaceAt = profile.exists() ? getProfileCloudReplaceAt(profile.data()) : "";
   for (const collectionName of collectionNames) {
     const records = await getCloudRecords(user, collectionName);
     await putLocalRecords(collectionName, records);
   }
   await putAppSetting("lastCloudMergeAt", new Date().toISOString());
+  if (cloudReplaceAt) {
+    await putAppSetting(lastKnownCloudReplaceAtKey, cloudReplaceAt);
+  }
 }
 
 export async function hasCloudProfile(user: User): Promise<boolean> {
   const profile = await getDoc(userDoc(user));
   return profile.exists();
 }
+
+export const __cloudSyncTest = {
+  getRecordUpdatedAtMs,
+  recordsDiffer,
+};

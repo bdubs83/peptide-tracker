@@ -64,4 +64,50 @@ describe("cloud sync", () => {
       appSettings: 1,
     });
   });
+
+  it("does not treat matching records with different key order as a conflict", async () => {
+    const { __cloudSyncTest } = await loadCloudSyncModule();
+    const updatedAt = "2026-06-29T12:00:00.000Z";
+    const left = {
+      id: "p1",
+      name: "KLOW",
+      createdAt: updatedAt,
+      updatedAt,
+      optional: undefined,
+      nested: {
+        dose: 1,
+        unit: "mg",
+      },
+    };
+    const right = {
+      nested: {
+        unit: "mg",
+        dose: 1,
+      },
+      updatedAt,
+      createdAt: updatedAt,
+      name: "KLOW",
+      id: "p1",
+    };
+
+    expect(__cloudSyncTest.recordsDiffer(left, right)).toBe(false);
+  });
+
+  it("compares equivalent ISO timestamps by time instead of string shape", async () => {
+    const { __cloudSyncTest } = await loadCloudSyncModule();
+    const withMilliseconds = {
+      key: "pref_timezone",
+      value: "America/New_York",
+      updatedAt: "2026-06-29T12:00:00.000Z",
+    };
+    const withoutMilliseconds = {
+      key: "pref_timezone",
+      value: "America/New_York",
+      updatedAt: "2026-06-29T12:00:00Z",
+    };
+
+    expect(__cloudSyncTest.getRecordUpdatedAtMs(withMilliseconds)).toBe(
+      __cloudSyncTest.getRecordUpdatedAtMs(withoutMilliseconds)
+    );
+  });
 });

@@ -6,10 +6,12 @@ import { putAppSetting, resolveAppSettings } from "../db/appSettings";
 import { normalizeLegacyPeptideNames } from "../db/nameCleanup";
 import {
   autoSyncEnabledKey,
+  lastAutoSyncAtKey,
   lastAutoSyncConflictsKey,
   lastAutoSyncErrorKey,
   lastAutoSyncResultKey,
   lastAutoSyncStatusKey,
+  lastKnownCloudReplaceAtKey,
   runAutoSync,
   subscribeToCloudSyncChanges,
 } from "../firebase/cloudSync";
@@ -39,14 +41,46 @@ const getLatestTimestamp = (records: Array<{ createdAt?: string; updatedAt?: str
 const syncableSettingKeysToIgnore = new Set([
   autoSyncEnabledKey,
   lastAutoSyncConflictsKey,
-  "lastAutoSyncAt",
+  lastAutoSyncAtKey,
   lastAutoSyncErrorKey,
   lastAutoSyncResultKey,
   lastAutoSyncStatusKey,
+  lastKnownCloudReplaceAtKey,
   "lastCloudBackupAt",
   "lastCloudRestoreAt",
   "lastCloudMergeAt",
 ]);
+
+const computeLocalSyncSignature = async () => {
+  const [
+    peptides,
+    schedules,
+    injectionLogs,
+    weightLogs,
+    stockItems,
+    vaultUsers,
+    settingsRows,
+  ] = await Promise.all([
+    db.peptides.toArray(),
+    db.schedules.toArray(),
+    db.injectionLogs.where("status").notEqual("scheduled").toArray(),
+    db.weightLogs.toArray(),
+    db.stockItems.toArray(),
+    db.vaultUsers.toArray(),
+    db.appSettings.toArray(),
+  ]);
+  const syncableSettings = settingsRows.filter((setting) => !syncableSettingKeysToIgnore.has(setting.key));
+
+  return JSON.stringify({
+    peptides: [peptides.length, getLatestTimestamp(peptides)],
+    schedules: [schedules.length, getLatestTimestamp(schedules)],
+    injectionLogs: [injectionLogs.length, getLatestTimestamp(injectionLogs)],
+    weightLogs: [weightLogs.length, getLatestTimestamp(weightLogs)],
+    stockItems: [stockItems.length, getLatestTimestamp(stockItems)],
+    vaultUsers: [vaultUsers.length, getLatestTimestamp(vaultUsers)],
+    appSettings: [syncableSettings.length, getLatestTimestamp(syncableSettings)],
+  });
+};
 
 export const App: React.FC = () => {
   const [copied, setCopied] = useState(false);
@@ -61,36 +95,7 @@ export const App: React.FC = () => {
   };
 
   const appSettings = useLiveQuery(() => db.appSettings.toArray());
-  const localSyncSignature = useLiveQuery(async () => {
-    const [
-      peptides,
-      schedules,
-      injectionLogs,
-      weightLogs,
-      stockItems,
-      vaultUsers,
-      settingsRows,
-    ] = await Promise.all([
-      db.peptides.toArray(),
-      db.schedules.toArray(),
-      db.injectionLogs.where("status").notEqual("scheduled").toArray(),
-      db.weightLogs.toArray(),
-      db.stockItems.toArray(),
-      db.vaultUsers.toArray(),
-      db.appSettings.toArray(),
-    ]);
-    const syncableSettings = settingsRows.filter((setting) => !syncableSettingKeysToIgnore.has(setting.key));
-
-    return JSON.stringify({
-      peptides: [peptides.length, getLatestTimestamp(peptides)],
-      schedules: [schedules.length, getLatestTimestamp(schedules)],
-      injectionLogs: [injectionLogs.length, getLatestTimestamp(injectionLogs)],
-      weightLogs: [weightLogs.length, getLatestTimestamp(weightLogs)],
-      stockItems: [stockItems.length, getLatestTimestamp(stockItems)],
-      vaultUsers: [vaultUsers.length, getLatestTimestamp(vaultUsers)],
-      appSettings: [syncableSettings.length, getLatestTimestamp(syncableSettings)],
-    });
-  });
+  const localSyncSignature = useLiveQuery(computeLocalSyncSignature);
   const isLoaded = appSettings !== undefined;
   const settings = resolveAppSettings(appSettings);
   const autoSyncEnabled = appSettings?.some((item) => item.key === autoSyncEnabledKey && item.value === true) ?? false;
@@ -123,7 +128,7 @@ export const App: React.FC = () => {
       try {
         await putAppSetting(lastAutoSyncStatusKey, "syncing");
         const result = await runAutoSync(cloudUser);
-        lastAutoSyncSignatureRef.current = localSyncSignature;
+        lastAutoSyncSignatureRef.current = await computeLocalSyncSignature();
         await putAppSetting(lastAutoSyncResultKey, result);
         await putAppSetting(lastAutoSyncErrorKey, "");
         await putAppSetting(lastAutoSyncStatusKey, result.conflicts > 0 ? "needsReview" : "idle");
@@ -147,6 +152,9 @@ export const App: React.FC = () => {
       cloudSyncTimeoutId = window.setTimeout(() => {
         void run(true);
       }, 750);
+    }, (error) => {
+      void putAppSetting(lastAutoSyncErrorKey, error.message || "Auto Sync listener failed.");
+      void putAppSetting(lastAutoSyncStatusKey, "error");
     });
     const handleOnline = () => void run(true);
     const handleVisibilityChange = () => {
