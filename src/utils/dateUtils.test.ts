@@ -7,6 +7,7 @@ import {
   getWeekBasedDoseScheduleStockProjection,
   getEstimatedRemainingDoses,
   getSharedOpenVialProjection,
+  getCurrentVialTotalMcg,
   isCurrentVialLog,
 } from "./dateUtils";
 import { convertLegacyScheduleToDoseSchedule } from "./scheduleMigration";
@@ -669,6 +670,43 @@ describe("dateUtils", () => {
       };
 
       expect(isCurrentVialLog(peptide, convertedPlaceholderLog)).toBe(true);
+    });
+
+    it("tracks carried-over vial amount after an early stock refill", () => {
+      const peptide: Peptide = {
+        id: "p1",
+        name: "Test Peptide",
+        vialMg: 5,
+        currentVialTotalMg: 7,
+        bacWaterMl: 2,
+        desiredDoseValue: 4,
+        desiredDoseUnit: "mg",
+        syringeSizeMl: 1,
+        unitsPerMl: 100,
+        concentrationMgPerMl: 2.5,
+        concentrationMcgPerMl: 2500,
+        doseMl: 1.6,
+        doseUnits: 160,
+        estimatedDosesPerVial: 1,
+        percentOfVialPerDose: 80,
+        currentVialStartedAt: "2026-06-29T12:00:00.000Z",
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-29T12:00:00Z",
+      };
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        intervalDays: 7,
+        startDate: "2026-06-29",
+        isActive: true,
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-29T12:00:00Z",
+      };
+
+      expect(getCurrentVialTotalMcg(peptide)).toBe(7000);
+      expect(getEstimatedRemainingDoses(peptide, schedule, [], "2026-06-29")).toBe(1);
+      expect(getEstimatedEmptyDate(peptide, schedule, [], "2026-06-29")).toBe("2026-07-06");
     });
   });
 

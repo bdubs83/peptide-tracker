@@ -591,6 +591,9 @@ export const AddPeptidePage: React.FC = () => {
       currentVialStartedAt: isEditMode
         ? existingData?.peptide?.currentVialStartedAt
         : selectedSourceOpenVial?.currentVialStartedAt || selectedSourceOpenVial?.createdAt || nowIso,
+      currentVialTotalMg: isEditMode
+        ? existingData?.peptide?.currentVialTotalMg
+        : selectedSourceOpenVial?.currentVialTotalMg,
       createdAt: existingData?.peptide?.createdAt || nowIso,
       updatedAt: nowIso,
     };

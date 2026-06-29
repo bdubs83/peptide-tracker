@@ -26,6 +26,7 @@ export interface Peptide {
 
   notes?: string;
   currentVialStartedAt?: string;
+  currentVialTotalMg?: number;
   efficacyVerifiedAt?: string;
   sourceStockItemId?: string;
   sourceOpenVialId?: string;

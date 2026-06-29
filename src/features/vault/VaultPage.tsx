@@ -19,6 +19,7 @@ import {
   parseLocalDate,
   getScheduledDoseForDate,
   getCurrentVialLogs,
+  getCurrentVialTotalMcg,
 } from "../../utils/dateUtils";
 import { formatMl, formatUnits, formatDose } from "../../utils/formatting";
 import { calculateReconstitution, normalizeDoseToMcg } from "../calculator/calculatorUtils";
@@ -73,6 +74,11 @@ const fileToDataUrl = (file: File) =>
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+
+const hasLessThanTwoDosesRemaining = (remainingMcg: number, doseMcg: number) => {
+  if (remainingMcg <= 0) return true;
+  return doseMcg > 0 && remainingMcg < doseMcg * 2;
+};
 
 export const VaultPage: React.FC = () => {
   const navigate = useNavigate();
@@ -266,6 +272,8 @@ export const VaultPage: React.FC = () => {
 
     const nowIso = new Date().toISOString();
     const newOpenVialId = crypto.randomUUID();
+    const existingRemainingMg = vialStatusByPeptideId.get(refillRequest.peptide.id)?.remainingMg || 0;
+    const currentVialTotalMg = Math.max(0, existingRemainingMg) + mgPerVial;
     const recalculated = calculateReconstitution({
       peptideMg: mgPerVial,
       bacWaterMl: refillRequest.peptide.bacWaterMl,
@@ -293,6 +301,7 @@ export const VaultPage: React.FC = () => {
           estimatedDosesPerVial: recalculated.estimatedDosesPerVial,
           percentOfVialPerDose: recalculated.percentOfVialPerDose,
           currentVialStartedAt: nowIso,
+          currentVialTotalMg,
           openVialId: newOpenVialId,
           efficacyVerifiedAt: undefined,
           sourceStockItemId: stockItem.id,
@@ -436,11 +445,12 @@ export const VaultPage: React.FC = () => {
         .filter((log) => log.status === "taken" || log.status === "manual")
         .reduce((sum, log) => sum + normalizeDoseToMcg(log.doseValue, log.doseUnit), 0);
 
-      const totalMcg = peptide.vialMg * 1000;
+      const totalMcg = getCurrentVialTotalMcg(peptide);
       const remainingMcg = Math.max(0, totalMcg - takenMcg);
+      const fullVialMcg = peptide.vialMg * 1000;
       map.set(peptide.id, {
         remainingMg: remainingMcg / 1000,
-        percent: totalMcg > 0 ? (remainingMcg / totalMcg) * 100 : 0,
+        percent: fullVialMcg > 0 ? (remainingMcg / fullVialMcg) * 100 : 0,
         remainingMcg,
       });
     }
@@ -1067,14 +1077,13 @@ export const VaultPage: React.FC = () => {
 
                   const shouldVerifyEfficacy =
                     daysUntilEmpty !== null && daysUntilEmpty > 60 && !peptide.efficacyVerifiedAt;
-                  const { remainingMg, percent } =
+                  const { remainingMg, percent, remainingMcg } =
                     vialStatusByPeptideId.get(peptide.id) || {
                       remainingMg: peptide.vialMg,
                       percent: 100,
-                      remainingMcg: peptide.vialMg * 1000,
+                      remainingMcg: getCurrentVialTotalMcg(peptide),
                     };
                   const stockOptions = getAvailableStockForPeptide(peptide);
-                  const canPullFromStock = remainingMg <= 0 && stockOptions.length > 0;
                   const scheduledDose =
                     schedule && nextDate
                       ? getScheduledDoseForDate(peptide, schedule, nextDate)
@@ -1082,6 +1091,9 @@ export const VaultPage: React.FC = () => {
                           doseValue: peptide.desiredDoseValue,
                           doseUnit: peptide.desiredDoseUnit,
                         };
+                  const refillDoseMcg = normalizeDoseToMcg(scheduledDose.doseValue, scheduledDose.doseUnit);
+                  const canPullFromStock =
+                    stockOptions.length > 0 && hasLessThanTwoDosesRemaining(remainingMcg, refillDoseMcg);
                   const scheduledDraw = getDrawForDose(
                     peptide,
                     scheduledDose.doseValue,
@@ -1336,7 +1348,7 @@ export const VaultPage: React.FC = () => {
                     vialStatusByPeptideId.get(selectedPeptide.id) || {
                       remainingMg: selectedPeptide.vialMg,
                       percent: 100,
-                      remainingMcg: selectedPeptide.vialMg * 1000,
+                      remainingMcg: getCurrentVialTotalMcg(selectedPeptide),
                     };
                   const emptyDate = sharedProjectionByPeptideId.get(selectedPeptide.id)?.emptyDate || null;
                   return (
@@ -1396,11 +1408,11 @@ export const VaultPage: React.FC = () => {
               })()}
 
               {(() => {
-                const { remainingMg } =
+                const { remainingMcg } =
                   vialStatusByPeptideId.get(selectedPeptide.id) || {
                     remainingMg: selectedPeptide.vialMg,
                     percent: 100,
-                    remainingMcg: selectedPeptide.vialMg * 1000,
+                    remainingMcg: getCurrentVialTotalMcg(selectedPeptide),
                   };
                 const emptyDate = sharedProjectionByPeptideId.get(selectedPeptide.id)?.emptyDate || null;
                 const daysUntilEmpty = emptyDate
@@ -1412,7 +1424,20 @@ export const VaultPage: React.FC = () => {
                 const shouldVerifyEfficacy =
                   daysUntilEmpty !== null && daysUntilEmpty > 60 && !selectedPeptide.efficacyVerifiedAt;
                 const stockOptions = getAvailableStockForPeptide(selectedPeptide);
-                const canPullFromStock = remainingMg <= 0 && stockOptions.length > 0;
+                const schedule = selectedPeptide ? scheduleByPeptideId.get(selectedPeptide.id) : undefined;
+                const nextDate = schedule
+                  ? getNextScheduledDoseDate(schedule, today, new Set(selectedPeptideLogs.map((log) => log.scheduledDate)))
+                  : "";
+                const scheduledDose =
+                  schedule && nextDate
+                    ? getScheduledDoseForDate(selectedPeptide, schedule, nextDate)
+                    : {
+                        doseValue: selectedPeptide.desiredDoseValue,
+                        doseUnit: selectedPeptide.desiredDoseUnit,
+                      };
+                const refillDoseMcg = normalizeDoseToMcg(scheduledDose.doseValue, scheduledDose.doseUnit);
+                const canPullFromStock =
+                  stockOptions.length > 0 && hasLessThanTwoDosesRemaining(remainingMcg, refillDoseMcg);
 
                 if (!shouldVerifyEfficacy && !canPullFromStock) return null;
 

@@ -21,6 +21,7 @@ import {
   addDays,
   parseLocalDate,
   getCurrentVialLogs,
+  getCurrentVialTotalMcg,
 } from "../../utils/dateUtils";
 import {
   formatMl,
@@ -449,10 +450,11 @@ export const PeptideDetailPage: React.FC = () => {
   const totalTakenMcg = takenLogs.reduce((sum, log) => {
     return sum + normalizeDoseToMcg(log.doseValue, log.doseUnit);
   }, 0);
-  const totalVialMcg = peptide.vialMg * 1000;
+  const totalVialMcg = getCurrentVialTotalMcg(peptide);
   const remainingMcg = Math.max(0, totalVialMcg - totalTakenMcg);
   const remainingMg = remainingMcg / 1000;
-  const remainingPercent = totalVialMcg > 0 ? (remainingMcg / totalVialMcg) * 100 : 0;
+  const fullVialMcg = peptide.vialMg * 1000;
+  const remainingPercent = fullVialMcg > 0 ? (remainingMcg / fullVialMcg) * 100 : 0;
   const remainingDosesCount = schedule
     ? getEstimatedRemainingDoses(peptide, schedule, currentVialLogs, today)
     : Math.floor(remainingMcg / normalizeDoseToMcg(peptide.desiredDoseValue, peptide.desiredDoseUnit));

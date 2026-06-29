@@ -439,6 +439,14 @@ export function getCurrentVialLogs(peptide: Peptide, injectionLogs: InjectionLog
   });
 }
 
+export function getCurrentVialTotalMcg(peptide: Peptide): number {
+  const totalMg =
+    typeof peptide.currentVialTotalMg === "number" && Number.isFinite(peptide.currentVialTotalMg)
+      ? peptide.currentVialTotalMg
+      : peptide.vialMg;
+  return Math.max(0, totalMg * 1000);
+}
+
 export function getEstimatedRemainingDoses(
   peptide: Peptide,
   schedule: PeptideSchedule,
@@ -453,7 +461,7 @@ export function getEstimatedRemainingDoses(
     return sum + normalizeDoseToMcg(log.doseValue, log.doseUnit);
   }, 0);
 
-  let remainingMcg = Math.max(0, peptide.vialMg * 1000 - totalTakenMcg);
+  let remainingMcg = Math.max(0, getCurrentVialTotalMcg(peptide) - totalTakenMcg);
   if (remainingMcg <= 0) return 0;
 
   const loggedScheduledDates = new Set(
@@ -521,7 +529,7 @@ export function getEstimatedEmptyDate(
     return sum + amountMcg;
   }, 0);
 
-  const totalVialMcg = peptide.vialMg * 1000;
+  const totalVialMcg = getCurrentVialTotalMcg(peptide);
   let remainingMcg = Math.max(0, totalVialMcg - totalTakenMcg);
 
   if (remainingMcg <= 0) {
@@ -591,7 +599,7 @@ export function getSharedOpenVialProjection(
     .filter((log) => log.status === "taken" || log.status === "manual")
     .reduce((sum, log) => sum + normalizeDoseToMcg(log.doseValue, log.doseUnit), 0);
 
-  let remainingMcg = Math.max(0, openVialPeptide.vialMg * 1000 - totalTakenMcg);
+  let remainingMcg = Math.max(0, getCurrentVialTotalMcg(openVialPeptide) - totalTakenMcg);
   if (remainingMcg <= 0) return { injectionCount: 0, emptyDate: fromDateStr };
 
   const peptidesById = new Map(peptides.map((peptide) => [peptide.id, peptide]));

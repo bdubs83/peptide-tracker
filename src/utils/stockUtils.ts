@@ -13,6 +13,7 @@ export function hasUsableVialCount(item: StockItem) {
 }
 
 export function isReceivedStock(item: StockItem, today = getLocalDateString()) {
+  if (!item.orderedDate) return true;
   return Boolean(item.receivedDate && item.receivedDate <= today);
 }
 
