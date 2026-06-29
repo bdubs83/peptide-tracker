@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { db } from "../db/db";
+import { putAppSetting } from "../db/appSettings";
 import { firestoreDb } from "./firebase";
 import type { Peptide } from "../types/peptide";
 import type { PeptideSchedule } from "../types/schedule";
@@ -89,6 +90,15 @@ const shouldSyncRecord = (collectionName: SyncCollectionName, record: SyncRecord
 const getSyncableRecords = (collectionName: SyncCollectionName, records: SyncRecord[]) =>
   records.filter((record) => shouldSyncRecord(collectionName, record));
 
+const withSyncTimestamps = <T extends SyncRecord>(records: T[]) => {
+  const nowIso = new Date().toISOString();
+  return records.map((record) => ({
+    ...record,
+    createdAt: "createdAt" in record && typeof record.createdAt === "string" ? record.createdAt : nowIso,
+    updatedAt: "updatedAt" in record && typeof record.updatedAt === "string" ? record.updatedAt : nowIso,
+  }));
+};
+
 const getLocalRecords = async (collectionName: SyncCollectionName): Promise<SyncRecord[]> => {
   if (collectionName === "peptides") return db.peptides.toArray();
   if (collectionName === "schedules") return db.schedules.toArray();
@@ -108,13 +118,14 @@ const getCloudRecords = async (user: User, collectionName: SyncCollectionName): 
 };
 
 const putLocalRecords = async (collectionName: SyncCollectionName, records: SyncRecord[]) => {
-  if (collectionName === "peptides") await db.peptides.bulkPut(records as Peptide[]);
-  if (collectionName === "schedules") await db.schedules.bulkPut(records as PeptideSchedule[]);
-  if (collectionName === "injectionLogs") await db.injectionLogs.bulkPut(records as InjectionLog[]);
-  if (collectionName === "weightLogs") await db.weightLogs.bulkPut(records as WeightLog[]);
-  if (collectionName === "stockItems") await db.stockItems.bulkPut(records as StockItem[]);
-  if (collectionName === "vaultUsers") await db.vaultUsers.bulkPut(records as VaultUser[]);
-  if (collectionName === "appSettings") await db.appSettings.bulkPut(records as AppSetting[]);
+  const timestampedRecords = withSyncTimestamps(records);
+  if (collectionName === "peptides") await db.peptides.bulkPut(timestampedRecords as Peptide[]);
+  if (collectionName === "schedules") await db.schedules.bulkPut(timestampedRecords as PeptideSchedule[]);
+  if (collectionName === "injectionLogs") await db.injectionLogs.bulkPut(timestampedRecords as InjectionLog[]);
+  if (collectionName === "weightLogs") await db.weightLogs.bulkPut(timestampedRecords as WeightLog[]);
+  if (collectionName === "stockItems") await db.stockItems.bulkPut(timestampedRecords as StockItem[]);
+  if (collectionName === "vaultUsers") await db.vaultUsers.bulkPut(timestampedRecords as VaultUser[]);
+  if (collectionName === "appSettings") await db.appSettings.bulkPut(timestampedRecords as AppSetting[]);
 };
 
 const clearLocalCollection = async (collectionName: SyncCollectionName) => {
@@ -244,7 +255,7 @@ export async function uploadLocalDataToCloud(user: User): Promise<void> {
     { merge: true }
   );
 
-  await db.appSettings.put({ key: "lastCloudBackupAt", value: new Date().toISOString() });
+  await putAppSetting("lastCloudBackupAt", new Date().toISOString());
 }
 
 export async function restoreCloudDataToLocal(user: User): Promise<void> {
@@ -267,7 +278,7 @@ export async function restoreCloudDataToLocal(user: User): Promise<void> {
         await clearLocalCollection(collectionName);
         await putLocalRecords(collectionName, cloudData.get(collectionName) || []);
       }
-      await db.appSettings.put({ key: "lastCloudRestoreAt", value: new Date().toISOString() });
+      await putAppSetting("lastCloudRestoreAt", new Date().toISOString());
     }
   );
 }
@@ -277,7 +288,7 @@ export async function mergeCloudDataIntoLocal(user: User): Promise<void> {
     const records = await getCloudRecords(user, collectionName);
     await putLocalRecords(collectionName, records);
   }
-  await db.appSettings.put({ key: "lastCloudMergeAt", value: new Date().toISOString() });
+  await putAppSetting("lastCloudMergeAt", new Date().toISOString());
 }
 
 export async function hasCloudProfile(user: User): Promise<boolean> {

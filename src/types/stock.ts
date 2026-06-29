@@ -15,4 +15,5 @@ export interface StockItem {
   coaDataUrl?: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
 }

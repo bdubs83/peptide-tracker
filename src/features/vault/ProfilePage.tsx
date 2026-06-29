@@ -21,12 +21,11 @@ import {
 } from "../../firebase/cloudSync";
 import type { WeightLog } from "../../types/weightLog";
 import type { AppSettingValue } from "../../db/schema";
-import { isAppTheme, resolveAppSettings, updateAppSettings } from "../../db/appSettings";
+import { isAppTheme, putAppSetting, resolveAppSettings, updateAppSettings } from "../../db/appSettings";
 import {
   Database,
   Bell,
   Download,
-  FileDown,
   Save,
   Plus,
   Trash2,
@@ -132,15 +131,6 @@ const downloadTextFile = (filename: string, contents: string, mimeType: string) 
   URL.revokeObjectURL(url);
 };
 
-const csvEscape = (value: unknown) => {
-  const text = value === undefined || value === null ? "" : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
-};
-
-const toCsv = (headers: string[], rows: unknown[][]) => {
-  return [headers.map(csvEscape).join(","), ...rows.map((row) => row.map(csvEscape).join(","))].join("\n");
-};
-
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value));
 
@@ -232,6 +222,13 @@ const isBackupData = (value: unknown): value is BackupData => {
     candidate.appSettings.every(isAppSettingBackupRecord)
   );
 };
+
+const withSyncTimestamps = <T extends { createdAt?: string; updatedAt?: string }>(records: T[], fallbackIso: string): T[] =>
+  records.map((record) => ({
+    ...record,
+    createdAt: record.createdAt || record.updatedAt || fallbackIso,
+    updatedAt: record.updatedAt || record.createdAt || fallbackIso,
+  }));
 
 interface WeightChartProps {
   entries: WeightLog[];
@@ -534,6 +531,23 @@ type ProfilePageProps = {
   mode?: "full" | "bodyTracker";
 };
 
+const autoSyncEnabledKey = "autoSyncEnabled";
+
+const getComparisonDifferenceCount = (comparison: CloudCollectionComparison[] | null) =>
+  comparison
+    ? comparison.reduce((sum, item) => sum + item.localOnly.length + item.cloudOnly.length, 0)
+    : 0;
+
+const hasComparisonDifferences = (comparison: CloudCollectionComparison[] | null) =>
+  Boolean(
+    comparison?.some(
+      (item) => item.localOnly.length > 0 || item.cloudOnly.length > 0 || item.localCount !== item.cloudCount
+    )
+  );
+
+const hasComparisonConflicts = (comparison: CloudCollectionComparison[] | null) =>
+  Boolean(comparison?.some((item) => item.localOnly.length > 0 && item.cloudOnly.length > 0));
+
 export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -550,6 +564,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const [cloudProfileExists, setCloudProfileExists] = useState(false);
   const [isInstallHelpOpen, setIsInstallHelpOpen] = useState(false);
   const [isSyncHelpOpen, setIsSyncHelpOpen] = useState(false);
+  const [isAutoSyncReviewOpen, setIsAutoSyncReviewOpen] = useState(false);
 
   // --- Preference settings states ---
   const [standardSyringeSize, setStandardSyringeSize] = useState("1.0");
@@ -618,6 +633,23 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     typeof lastBackupSetting?.value === "string"
       ? new Date(lastBackupSetting.value).toLocaleString()
       : "No backup created yet";
+  const autoSyncEnabled = settingsList?.some((item) => item.key === autoSyncEnabledKey && item.value === true) ?? false;
+  const autoSyncDifferenceCount = getComparisonDifferenceCount(cloudComparison);
+  const autoSyncStatus = isAutoSyncReviewOpen && hasComparisonConflicts(cloudComparison)
+    ? "Needs review"
+    : isAutoSyncReviewOpen && autoSyncDifferenceCount > 0
+    ? `${autoSyncDifferenceCount} changes pending`
+    : !autoSyncEnabled
+    ? "Off"
+    : !cloudUser
+    ? "Sign in required"
+    : hasComparisonConflicts(cloudComparison)
+    ? "Needs review"
+    : autoSyncDifferenceCount > 0
+    ? `${autoSyncDifferenceCount} changes pending`
+    : cloudComparison
+    ? "Up to date"
+    : "Not checked";
 
   const totalLocalRecords = localCounts
     ? Object.values(localCounts).reduce((sum, count) => sum + count, 0)
@@ -686,7 +718,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
   // Handle setting updates
   const updateSetting = async (key: string, value: AppSettingValue) => {
-    await db.appSettings.put({ key, value });
+    await putAppSetting(key, value);
   };
 
   const handleLayoutModeChange = async (value: LayoutMode) => {
@@ -807,7 +839,104 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const handleSignOut = () => {
     if (!confirm("Sign out of cloud sync on this device? Your local data will stay on this device, but new changes will not sync until you sign in again.")) return;
 
-    runAccountAction(() => signOut(firebaseAuth), "Signed out. This device is back to local-only mode.");
+    runAccountAction(async () => {
+      await putAppSetting(autoSyncEnabledKey, false);
+      setIsAutoSyncReviewOpen(false);
+      await signOut(firebaseAuth);
+    }, "Signed out. This device is back to local-only mode.");
+  };
+
+  const handleAutoSyncToggle = () => {
+    if (autoSyncEnabled) {
+      runAccountAction(async () => {
+        await putAppSetting(autoSyncEnabledKey, false);
+        setIsAutoSyncReviewOpen(false);
+      }, "Auto Sync is off on this device.");
+      return;
+    }
+
+    if (!cloudUser) {
+      setAuthMessage("Sign in before turning on Auto Sync.");
+      return;
+    }
+
+    runAccountAction(async () => {
+      const comparison = await compareLocalAndCloudData(cloudUser);
+      setCloudComparison(comparison);
+
+      if (!hasComparisonDifferences(comparison)) {
+        await putAppSetting(autoSyncEnabledKey, true);
+        setIsAutoSyncReviewOpen(false);
+        return;
+      }
+
+      setIsAutoSyncReviewOpen(true);
+      throw new Error("Review device/account differences before turning on Auto Sync.");
+    }, "Auto Sync is on. Device and account data match.");
+  };
+
+  const handleEnableAutoSyncAfterMerge = () => {
+    if (!cloudUser) return;
+    if (
+      !confirm(
+        [
+          "Merge missing records before turning on Auto Sync?",
+          "",
+          "This will bring account records onto this device, then update the account with the combined data.",
+          "Use this when both device and account contain records you want to keep.",
+        ].join("\n")
+      )
+    ) return;
+
+    runAccountAction(async () => {
+      await mergeCloudDataIntoLocal(cloudUser);
+      await uploadLocalDataToCloud(cloudUser);
+      await putAppSetting(autoSyncEnabledKey, true);
+      setCloudComparison(await compareLocalAndCloudData(cloudUser));
+      setIsAutoSyncReviewOpen(false);
+    }, "Auto Sync is on. Missing records were merged first.");
+  };
+
+  const handleEnableAutoSyncFromDevice = () => {
+    if (!cloudUser) return;
+    if (
+      !confirm(
+        [
+          "Use this device as the source before turning on Auto Sync?",
+          "",
+          "This will replace the account copy with this device's current data.",
+          "Anything that exists only in the account copy will be removed from the account.",
+        ].join("\n")
+      )
+    ) return;
+
+    runAccountAction(async () => {
+      await uploadLocalDataToCloud(cloudUser);
+      await putAppSetting(autoSyncEnabledKey, true);
+      setCloudComparison(await compareLocalAndCloudData(cloudUser));
+      setIsAutoSyncReviewOpen(false);
+    }, "Auto Sync is on. This device was used as the account source.");
+  };
+
+  const handleEnableAutoSyncFromAccount = () => {
+    if (!cloudUser) return;
+    if (
+      !confirm(
+        [
+          "Restore account data before turning on Auto Sync?",
+          "",
+          "This will replace this device's local data with the account copy.",
+          "Local records that are not in the account copy will be removed from this device.",
+        ].join("\n")
+      )
+    ) return;
+
+    runAccountAction(async () => {
+      await restoreCloudDataToLocal(cloudUser);
+      await putAppSetting(autoSyncEnabledKey, true);
+      setCloudComparison(await compareLocalAndCloudData(cloudUser));
+      setIsAutoSyncReviewOpen(false);
+    }, "Auto Sync is on. Account data was restored to this device first.");
   };
 
   const handleUploadLocalToCloud = () => {
@@ -1006,6 +1135,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     }
 
     if (!confirm("Import this backup? It will replace the current local app data on this device.")) return;
+    const importedAt = new Date().toISOString();
 
     await db.transaction(
       "rw",
@@ -1018,69 +1148,17 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
         await db.stockItems.clear();
         await db.vaultUsers.clear();
         await db.appSettings.clear();
-        await db.peptides.bulkPut(parsed.peptides);
-        await db.schedules.bulkPut(parsed.schedules);
-        await db.injectionLogs.bulkPut(parsed.injectionLogs);
-        await db.weightLogs.bulkPut(parsed.weightLogs);
-        await db.stockItems.bulkPut(parsed.stockItems || []);
-        await db.vaultUsers.bulkPut(parsed.vaultUsers || []);
-        await db.appSettings.bulkPut(parsed.appSettings);
+        await db.peptides.bulkPut(withSyncTimestamps(parsed.peptides, importedAt));
+        await db.schedules.bulkPut(withSyncTimestamps(parsed.schedules, importedAt));
+        await db.injectionLogs.bulkPut(withSyncTimestamps(parsed.injectionLogs, importedAt));
+        await db.weightLogs.bulkPut(withSyncTimestamps(parsed.weightLogs, importedAt));
+        await db.stockItems.bulkPut(withSyncTimestamps(parsed.stockItems || [], importedAt));
+        await db.vaultUsers.bulkPut(withSyncTimestamps(parsed.vaultUsers || [], importedAt));
+        await db.appSettings.bulkPut(withSyncTimestamps(parsed.appSettings, importedAt));
       }
     );
     await updateSetting("lastBackupAt", new Date().toISOString());
     alert("Backup imported.");
-  };
-
-  const handleExportInjectionCsv = async () => {
-    const injectionLogs = await db.injectionLogs.toArray();
-    const csv = toCsv(
-      [
-        "Peptide",
-        "Scheduled Date",
-        "Actual Date Time",
-        "Dose",
-        "Dose Unit",
-        "Draw mL",
-        "Draw Units",
-        "Status",
-        "Injection Site",
-        "Notes",
-      ],
-      injectionLogs.map((log) => [
-        log.peptideNameSnapshot,
-        log.scheduledDate,
-        log.actualDateTime || "",
-        log.doseValue,
-        log.doseUnit,
-        log.drawMl,
-        log.drawUnits,
-        log.status,
-        log.injectionSiteLabel || "",
-        log.notes || "",
-      ])
-    );
-    downloadTextFile(`injection-logs-${getTodayInputValue()}.csv`, csv, "text/csv");
-  };
-
-  const handleExportWeightCsv = async () => {
-    const rows = await db.weightLogs.toArray();
-    const csv = toCsv(
-      ["Date", "Time", "Weight", "Body Fat", "Waist", "Chest", "Neck", "Arm", "Thigh", "Custom", "Notes"],
-      rows.map((log) => [
-        log.date,
-        log.time,
-        log.weight,
-        log.bodyFat || "",
-        log.waist || "",
-        log.chest || "",
-        log.neck || "",
-        log.arm || "",
-        log.thigh || "",
-        log.customMeasurements ? JSON.stringify(log.customMeasurements) : "",
-        log.notes || "",
-      ])
-    );
-    downloadTextFile(`body-progress-${getTodayInputValue()}.csv`, csv, "text/csv");
   };
 
   // --- Statistics calculations ---
@@ -1257,18 +1335,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
           </Card>
 
           <Card style={{ marginBottom: "20px" }}>
-            <Select
-              label="Theme"
-              value={theme}
-              onChange={(e) => {
-                if (!isAppTheme(e.target.value)) return;
-                handleThemeChange(e.target.value);
-              }}
-              options={themeOptions}
-            />
-          </Card>
-
-          <Card style={{ marginBottom: "20px" }}>
             <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
               <Cloud size={20} style={{ color: "var(--color-primary)" }} />
               Account & Cloud Sync
@@ -1295,7 +1361,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   onChange={(e) => setAuthPassword(e.target.value)}
                   placeholder="At least 6 characters"
                 />
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
                   <Button variant="primary" onClick={handleEmailSignIn} disabled={isAuthBusy}>
                     <LogIn size={16} />
                     Sign In
@@ -1313,7 +1379,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
                     gap: "8px",
                     fontSize: "0.82rem",
                     color: "var(--text-secondary)",
@@ -1338,6 +1404,54 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                     This account does not have a cloud backup yet. Upload this device when you are ready.
                   </div>
                 )}
+
+                <div
+                  style={{
+                    display: "grid",
+                    gap: "10px",
+                    border: "1px solid var(--border-color)",
+                    borderRadius: "var(--border-radius-sm)",
+                    padding: "10px",
+                    background: "var(--bg-input)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+                    <div>
+                      <div style={{ color: "var(--text-primary)", fontWeight: 800 }}>Auto Sync</div>
+                      <div style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "3px" }}>
+                        Status: {autoSyncStatus}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAutoSyncToggle}
+                      disabled={isAuthBusy}
+                      className={`btn ${autoSyncEnabled ? "btn-success" : "btn-secondary"}`}
+                      style={{ minWidth: "92px" }}
+                    >
+                      {autoSyncEnabled ? "On" : "Off"}
+                    </button>
+                  </div>
+
+                  {isAutoSyncReviewOpen && cloudComparison && (
+                    <div style={{ display: "grid", gap: "8px" }}>
+                      <div style={{ color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.45 }}>
+                        Device and account records do not fully match. Choose how to make the first Auto Sync baseline.
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px" }}>
+                        <Button variant="primary" onClick={handleEnableAutoSyncAfterMerge} disabled={isAuthBusy}>
+                          Merge Missing Records
+                        </Button>
+                        <Button variant="secondary" onClick={handleEnableAutoSyncFromDevice} disabled={isAuthBusy}>
+                          Use This Device
+                        </Button>
+                        <Button variant="secondary" onClick={handleEnableAutoSyncFromAccount} disabled={isAuthBusy || totalCloudRecords === 0}>
+                          Restore Account Here
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 <Button variant="secondary" fullWidth onClick={() => setIsSyncHelpOpen(true)}>
                   <HelpCircle size={16} />
@@ -1391,7 +1505,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   </div>
                 )}
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div style={{ display: "grid", gap: "4px" }}>
+                  <div style={{ color: "var(--text-primary)", fontWeight: 800, fontSize: "0.92rem" }}>
+                    Manual Recovery Tools
+                  </div>
+                  <div style={{ color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.45 }}>
+                    Use these only when you need to intentionally replace or repair the account copy.
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
                   <Button variant="primary" onClick={handleUploadLocalToCloud} disabled={isAuthBusy}>
                     <Upload size={16} />
                     Upload Device
@@ -1416,6 +1539,20 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 {authMessage}
               </p>
             )}
+          </Card>
+
+          <Card style={{ marginBottom: "20px" }}>
+            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <FileText size={20} style={{ color: "var(--color-primary)" }} />
+              Report Center
+            </h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "12px", lineHeight: 1.5 }}>
+              Build filtered PDF and CSV exports for stock, open vials, schedules, history, body progress, and half-life reports.
+            </p>
+            <Button variant="primary" fullWidth onClick={() => navigate("/exports")}>
+              <FileText size={16} />
+              Open Report Center
+            </Button>
           </Card>
 
           {/* Preferences Section */}
@@ -1444,6 +1581,18 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
               <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "6px" }}>
                 Auto adjusts the layout based on the available screen width.
               </p>
+            </div>
+
+            <div style={{ marginBottom: "16px" }}>
+              <Select
+                label="Theme"
+                value={theme}
+                onChange={(e) => {
+                  if (!isAppTheme(e.target.value)) return;
+                  handleThemeChange(e.target.value);
+                }}
+                options={themeOptions}
+              />
             </div>
             
             <div className="form-row-grid">
@@ -1500,35 +1649,31 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 options={timezoneOptions}
               />
             </div>
-          </Card>
 
-          <Card style={{ marginBottom: "20px" }}>
-            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
+            <div style={{ borderTop: "1px solid var(--border-color)", margin: "18px 0", paddingTop: "18px" }}>
+              <h2 style={{ fontSize: "1.05rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
               <Bell size={20} style={{ color: "var(--color-primary)" }} />
               Reminder Settings
-            </h2>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "14px", lineHeight: 1.5 }}>
-              In-app reminders show when the app is open. Device notifications require browser permission and use each vial's injection time for before-dose alerts.
-            </p>
+              </h2>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "14px", lineHeight: 1.5 }}>
+                In-app reminders show when the app is open. Device notifications require browser permission and use each vial's injection time for before-dose alerts.
+              </p>
 
-            <div style={{ display: "grid", gap: "12px" }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(120px, 0.32fr) minmax(0, 1fr)",
-                  gap: "10px",
-                  alignItems: "start",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => handleInAppReminderChange(!inAppRemindersEnabled)}
-                  className={`btn ${inAppRemindersEnabled ? "btn-success" : "btn-secondary"}`}
-                  style={{ minHeight: "44px", padding: "9px 10px", justifyContent: "space-between" }}
-                >
-                  <span>In-App</span>
-                  <span>{inAppRemindersEnabled ? "On" : "Off"}</span>
-                </button>
+              <div className="reminder-settings-stack">
+              <div className="reminder-setting-panel">
+                <div className="reminder-setting-header">
+                  <div className="reminder-setting-title">
+                    <strong>In-App</strong>
+                    <span>Reminder banner while the app is open.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInAppReminderChange(!inAppRemindersEnabled)}
+                    className={`btn reminder-toggle-button ${inAppRemindersEnabled ? "btn-success" : "btn-secondary"}`}
+                  >
+                    {inAppRemindersEnabled ? "On" : "Off"}
+                  </button>
+                </div>
                 {inAppRemindersEnabled ? (
                   <Select
                     label="Show Due Within"
@@ -1544,37 +1689,32 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                     ]}
                   />
                 ) : (
-                  <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", lineHeight: 1.45, paddingTop: "10px" }}>
+                  <p className="reminder-option-message">
                     In-app reminder banner is off.
                   </p>
                 )}
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(120px, 0.32fr) minmax(0, 1fr)",
-                  gap: "10px",
-                  alignItems: "start",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => handleDeviceNotificationChange(!deviceNotificationsEnabled)}
-                  className={`btn ${deviceNotificationsEnabled ? "btn-success" : "btn-secondary"}`}
-                  style={{ minHeight: "44px", padding: "9px 10px", justifyContent: "space-between" }}
-                >
-                  <span>Device</span>
-                  <span>
+              <div className="reminder-setting-panel">
+                <div className="reminder-setting-header">
+                  <div className="reminder-setting-title">
+                    <strong>Device</strong>
+                    <span>Browser notification alerts before injection time.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDeviceNotificationChange(!deviceNotificationsEnabled)}
+                    className={`btn reminder-toggle-button ${deviceNotificationsEnabled ? "btn-success" : "btn-secondary"}`}
+                  >
                     {notificationPermission === "unsupported"
                       ? "No"
                       : deviceNotificationsEnabled
                       ? "On"
                       : "Off"}
-                  </span>
-                </button>
+                  </button>
+                </div>
                 {deviceNotificationsEnabled ? (
-                  <div className="form-row-grid">
+                  <div className="reminder-control-grid">
                     <Select
                       label="First Alert"
                       value={devicePrimaryLead}
@@ -1606,24 +1746,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                     />
                   </div>
                 ) : (
-                  <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", lineHeight: 1.45, paddingTop: "10px" }}>
+                  <p className="reminder-option-message">
                     Device notifications are off.
                   </p>
                 )}
               </div>
-            </div>
+              </div>
 
-            {reminderMessage && (
-              <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "10px", lineHeight: 1.45 }}>
-                {reminderMessage}
-              </p>
-            )}
+              {reminderMessage && (
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "10px", lineHeight: 1.45 }}>
+                  {reminderMessage}
+                </p>
+              )}
+            </div>
           </Card>
 
           <Card style={{ marginBottom: "20px" }}>
             <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
               <Database size={20} style={{ color: "var(--color-primary)" }} />
-              Backup & Export
+              Backup & Import
             </h2>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "12px", lineHeight: 1.5 }}>
               Local browser data can be lost if browser storage is cleared. Last backup: {lastBackupLabel}
@@ -1642,11 +1783,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 }
               }}
             />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-              <Button variant="primary" onClick={() => navigate("/exports")}>
-                <FileText size={16} />
-                Report Center
-              </Button>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
               <Button variant="primary" onClick={handleExportBackup}>
                 <Download size={16} />
                 Backup JSON
@@ -1654,14 +1791,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
               <Button variant="secondary" onClick={() => backupInputRef.current?.click()}>
                 <Upload size={16} />
                 Import Backup
-              </Button>
-              <Button variant="secondary" onClick={handleExportInjectionCsv}>
-                <FileDown size={16} />
-                Injection CSV
-              </Button>
-              <Button variant="secondary" onClick={handleExportWeightCsv}>
-                <FileDown size={16} />
-                Body CSV
               </Button>
             </div>
           </Card>
@@ -1773,7 +1902,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
               {showMeasurements && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                   <span className="form-label" style={{ fontSize: "0.75rem", fontWeight: 600 }}>Measurements</span>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: "8px" }}>
                     <Input label="Body Fat %" type="number" inputMode="decimal" value={newBodyFat} onChange={(e) => setNewBodyFat(e.target.value)} placeholder="%" />
                     <Input label="Waist" type="number" inputMode="decimal" value={newWaist} onChange={(e) => setNewWaist(e.target.value)} placeholder={lengthUnit} />
                     <Input label="Chest" type="number" inputMode="decimal" value={newChest} onChange={(e) => setNewChest(e.target.value)} placeholder={lengthUnit} />
@@ -1783,7 +1912,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   </div>
 
                   {customMeasurementLabels.length > 0 && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "8px" }}>
                       {customMeasurementLabels.map((label) => (
                         <Input
                           key={label}
@@ -1933,7 +2062,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
                           {showMeasurements && (
                             <>
-                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "6px" }}>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: "6px" }}>
                                 <Input label="Body Fat %" type="number" inputMode="decimal" value={item.bodyFat || ""} onChange={(e) => handleUpdateEntryField(item.id, "bodyFat", e.target.value)} />
                                 <Input label="Waist" type="number" inputMode="decimal" value={item.waist || ""} onChange={(e) => handleUpdateEntryField(item.id, "waist", e.target.value)} placeholder={lengthUnit} />
                                 <Input label="Chest" type="number" inputMode="decimal" value={item.chest || ""} onChange={(e) => handleUpdateEntryField(item.id, "chest", e.target.value)} placeholder={lengthUnit} />
@@ -2096,12 +2225,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
             <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
               {[
                 {
+                  title: "Turning on Auto Sync",
+                  action: "Use Auto Sync first. It compares this device with the account and asks how to create the first clean baseline if records differ.",
+                },
+                {
                   title: "Added or changed something on this device",
-                  action: "Tap Upload Device here, then tap Merge Account on the other device.",
+                  action: "With Auto Sync off, tap Upload Device here, then tap Merge Account on the other device.",
                 },
                 {
                   title: "Added or changed something on another device",
-                  action: "On that device, tap Upload Device. Then come back here and tap Merge Account.",
+                  action: "With Auto Sync off, upload from that device. Then come back here and tap Merge Account.",
                 },
                 {
                   title: "Deleted something and want the other device to match",

@@ -34,4 +34,5 @@ export interface Peptide {
 
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
 }

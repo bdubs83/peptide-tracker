@@ -305,7 +305,7 @@ h1, h2, h3, h4, h5, h6 {
   position: relative;
   border-left: 1px solid var(--border-color);
   border-right: 1px solid var(--border-color);
-  padding-bottom: 80px; /* space for bottom nav */
+  padding-bottom: calc(80px + env(safe-area-inset-bottom)); /* space for bottom nav */
 }
 
 /* Glassmorphism utility */
@@ -327,6 +327,7 @@ h1, h2, h3, h4, h5, h6 {
   padding: 16px;
   box-shadow: var(--shadow-md);
   transition: transform var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
+  min-width: 0;
 }
 
 .card-premium:active {
@@ -339,6 +340,7 @@ h1, h2, h3, h4, h5, h6 {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .form-label {
@@ -359,6 +361,13 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 1rem;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   outline: none;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+select.form-control {
+  text-overflow: ellipsis;
 }
 
 .form-control:focus {
@@ -368,8 +377,9 @@ h1, h2, h3, h4, h5, h6 {
 
 .form-row-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  min-width: 0;
 }
 
 /* Badge classes */
@@ -428,7 +438,7 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateX(-50%);
   width: 100%;
   max-width: 480px;
-  height: 64px;
+  height: calc(64px + env(safe-area-inset-bottom));
   background: var(--bg-nav);
   backdrop-filter: var(--backdrop-blur);
   -webkit-backdrop-filter: var(--backdrop-blur);
@@ -436,7 +446,7 @@ h1, h2, h3, h4, h5, h6 {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   z-index: 100;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding: 0 2px env(safe-area-inset-bottom);
 }
 
 .nav-tab-button {
@@ -452,6 +462,8 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 500;
   gap: 3px;
   min-width: 0;
+  overflow: hidden;
+  padding: 4px 1px;
   cursor: pointer;
   transition: color var(--transition-fast);
 }
@@ -615,6 +627,66 @@ h1, h2, h3, h4, h5, h6 {
 .metric-tile strong {
   display: block;
   font-size: 0.95rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.reminder-settings-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.reminder-setting-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.reminder-setting-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.reminder-setting-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.reminder-setting-title strong {
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.reminder-setting-title span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.reminder-toggle-button {
+  min-width: 86px;
+  min-height: 38px;
+  padding: 8px 12px;
+  flex: 0 0 auto;
+}
+
+.reminder-control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reminder-option-message {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .desktop-page-content .calendar-desktop-layout {
@@ -736,10 +808,14 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .mobile-app-container,
-.mobile-app-container .page-content,
-.mobile-app-container .card-premium {
+.mobile-app-container .page-content {
   max-width: 100%;
   overflow-x: hidden;
+}
+
+.mobile-app-container .card-premium {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 420px) {
@@ -776,6 +852,34 @@ h1, h2, h3, h4, h5, h6 {
   .calendar-user-dot {
     width: 4px;
     height: 4px;
+  }
+
+  .form-row-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reminder-control-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 360px) {
+  .nav-tab-button {
+    gap: 0;
+  }
+
+  .nav-tab-button svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .nav-tab-button span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 
@@ -934,6 +1038,15 @@ h1, h2, h3, h4, h5, h6 {
   user-select: none;
   text-decoration: none;
   outline: none;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
+}
+
+.btn svg {
+  flex: 0 0 auto;
 }
 
 .btn:active {

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { jsPDF } from "jspdf";
-import { ArrowLeft, Check, Download, FileText, Printer } from "lucide-react";
+import { ArrowLeft, Check, Download, FileDown, FileText, Printer } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
@@ -14,6 +14,7 @@ import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
 import type { StockItem } from "../../types/stock";
 import { DEFAULT_VAULT_USER_ID, type VaultUser } from "../../types/vaultUser";
+import type { WeightLog } from "../../types/weightLog";
 import { PEPTIDE_CATALOG } from "../../utils/peptideCatalog";
 import { getBlendDefinitionForCatalogId, getBlendDefinitionForName } from "../../utils/blendDefinitions";
 import {
@@ -189,9 +190,30 @@ function getDoseEventsForRange(
   return Array.from(eventsByKey.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function makeFileName(label: string) {
-  return `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}-${getLocalDateString()}.pdf`;
+function makeFileName(label: string, extension = "pdf") {
+  return `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}-${getLocalDateString()}.${extension}`;
 }
+
+const csvEscape = (value: unknown) => {
+  const text = value === undefined || value === null ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+};
+
+const toCsv = (headers: string[], rows: unknown[][]) => {
+  return [headers.map(csvEscape).join(","), ...rows.map((row) => row.map(csvEscape).join(","))].join("\n");
+};
+
+const downloadTextFile = (filename: string, contents: string, mimeType: string) => {
+  const blob = new Blob([contents], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
 function daysBetween(startDateStr: string, endDateStr: string) {
   const start = new Date(`${startDateStr}T00:00:00`);
@@ -403,7 +425,8 @@ function drawHalfLifeCurve(doc: jsPDF, inputs: HalfLifeCurveInput[], startDate: 
 }
 
 const tableStyle: React.CSSProperties = {
-  width: "100%",
+  width: "max-content",
+  minWidth: "100%",
   borderCollapse: "collapse",
   fontSize: "0.82rem",
 };
@@ -432,7 +455,7 @@ function ReportTable({ headers, rows }: { headers: string[]; rows: React.ReactNo
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div style={{ maxWidth: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={tableStyle}>
         <thead>
           <tr>
@@ -497,9 +520,10 @@ export const ExportCenterPage: React.FC = () => {
   const schedules = useLiveQuery(() => db.schedules.toArray(), []);
   const logs = useLiveQuery(() => db.injectionLogs.toArray(), []);
   const stockItems = useLiveQuery(() => db.stockItems.toArray(), []);
+  const weightLogs = useLiveQuery(() => db.weightLogs.toArray(), []);
   const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray(), []);
 
-  const isLoaded = peptides && schedules && logs && stockItems && vaultUsers;
+  const isLoaded = peptides && schedules && logs && stockItems && weightLogs && vaultUsers;
   const userNameById = useMemo(() => makeUserNameMap(vaultUsers || []), [vaultUsers]);
   const peptideById = useMemo(() => new Map((peptides || []).map((peptide) => [peptide.id, peptide])), [peptides]);
   const stockById = useMemo(() => new Map((stockItems || []).map((stock) => [stock.id, stock])), [stockItems]);
@@ -587,6 +611,10 @@ export const ExportCenterPage: React.FC = () => {
       );
     })
     .sort((a, b) => b.scheduledDate.localeCompare(a.scheduledDate) || (b.actualDateTime || "").localeCompare(a.actualDateTime || ""));
+
+  const bodyProgressRows: WeightLog[] = !isDateRangeValid ? [] : (weightLogs || [])
+    .filter((log) => log.date >= startDate && log.date <= endDate)
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.time || "").localeCompare(a.time || ""));
 
   const scheduleRows = (schedules || [])
     .filter((schedule) => {
@@ -1030,6 +1058,110 @@ export const ExportCenterPage: React.FC = () => {
     doc.save(makeFileName("Compiled Report"));
   };
 
+  const handleDownloadCsv = (
+    label: string,
+    headers: string[],
+    rows: unknown[][]
+  ) => {
+    if (!isLoaded || !isDateRangeValid) return;
+    downloadTextFile(makeFileName(label, "csv"), toCsv(headers, rows), "text/csv");
+  };
+
+  const handleDownloadInjectionHistoryCsv = () => {
+    handleDownloadCsv(
+      "Injection History",
+      ["User", "Scheduled Date", "Actual Date Time", "Peptide", "Dose", "Dose Unit", "Draw mL", "Draw Units", "Status", "Injection Site", "Notes"],
+      historyRows.map((log) => {
+        const peptide = peptideById.get(log.peptideId);
+        const userId = log.vaultUserId || peptide?.vaultUserId || DEFAULT_VAULT_USER_ID;
+        return [
+          userNameById.get(userId) || "User 1",
+          log.scheduledDate,
+          log.actualDateTime || "",
+          log.peptideNameSnapshot || peptide?.name || "",
+          log.doseValue,
+          log.doseUnit,
+          log.drawMl,
+          log.drawUnits,
+          log.status,
+          log.injectionSiteLabel || "",
+          log.notes || "",
+        ];
+      })
+    );
+  };
+
+  const handleDownloadBodyProgressCsv = () => {
+    handleDownloadCsv(
+      "Body Progress",
+      ["Date", "Time", "Weight", "Body Fat", "Waist", "Chest", "Neck", "Arm", "Thigh", "Custom", "Notes"],
+      bodyProgressRows.map((log) => [
+        log.date,
+        log.time,
+        log.weight,
+        log.bodyFat || "",
+        log.waist || "",
+        log.chest || "",
+        log.neck || "",
+        log.arm || "",
+        log.thigh || "",
+        log.customMeasurements ? JSON.stringify(log.customMeasurements) : "",
+        log.notes || "",
+      ])
+    );
+  };
+
+  const handleDownloadVaultStockCsv = () => {
+    handleDownloadCsv(
+      "Vault Stock",
+      ["Item", "Batch", "Vials", "Mg Per Vial", "Supplier", "Ordered", "Received", "Manufacturer", "Stored", "COA", "Notes"],
+      filteredStockItems.map((stock) => [
+        stock.name,
+        stock.batchNumber || "",
+        stock.numberOfVials || "",
+        stock.mgPerVial || "",
+        stock.supplier || "",
+        stock.orderedDate || "",
+        stock.receivedDate || "",
+        stock.manufacturerDate || "",
+        stock.storedLocation || "",
+        stock.coaFileName || "",
+        stock.notes || "",
+      ])
+    );
+  };
+
+  const handleDownloadOpenVialsCsv = () => {
+    handleDownloadCsv(
+      "Open Vials",
+      ["User", "Peptide", "Vial Mg", "BAC Water mL", "Scheduled Dose", "Dose Unit", "Draw mL", "Draw Units", "Next Dose", "Vial Opened", "Source"],
+      filteredPeptides.map((peptide) => {
+        const nextDose = getNextScheduledDoseInfo(peptide);
+        return [
+          userNameById.get(getUserId(peptide)) || "User 1",
+          peptide.name,
+          peptide.vialMg,
+          peptide.bacWaterMl,
+          nextDose?.dose.doseValue ?? "",
+          nextDose?.dose.doseUnit ?? "",
+          nextDose?.draw.drawMl ?? "",
+          nextDose?.draw.drawUnits ?? "",
+          nextDose?.nextDate ?? "",
+          peptide.currentVialStartedAt ? peptide.currentVialStartedAt.slice(0, 10) : "",
+          getStockSourceLabel(peptide),
+        ];
+      })
+    );
+  };
+
+  const handleDownloadInjectionScheduleCsv = () => {
+    handleDownloadCsv(
+      "Injection Schedule",
+      ["Date", "User", "Peptide", "Dose", "Pattern"],
+      scheduleDateRows.map((row) => [row.date, row.user, row.peptide, row.dose, row.pattern])
+    );
+  };
+
   const renderExcludedHalfLifeItems = () => {
     if (!selectedReportSections.some((section) => section === "halfLifeInputs" || section === "halfLifeSummary")) return null;
     if (halfLifeExcludedRows.length === 0) return null;
@@ -1319,11 +1451,44 @@ export const ExportCenterPage: React.FC = () => {
               Clear Filters
             </Button>
           </div>
+
+          <div
+            style={{
+              border: "1px solid var(--border-color)",
+              borderRadius: "var(--border-radius-sm)",
+              padding: "12px",
+              background: "var(--bg-input)",
+            }}
+          >
+            <span className="form-label">CSV Exports</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px", marginTop: "10px" }}>
+              <Button variant="secondary" onClick={handleDownloadVaultStockCsv} disabled={!canExportReport}>
+                <FileDown size={16} />
+                Vault Stock
+              </Button>
+              <Button variant="secondary" onClick={handleDownloadOpenVialsCsv} disabled={!canExportReport}>
+                <FileDown size={16} />
+                Open Vials
+              </Button>
+              <Button variant="secondary" onClick={handleDownloadInjectionHistoryCsv} disabled={!canExportReport}>
+                <FileDown size={16} />
+                Injection History
+              </Button>
+              <Button variant="secondary" onClick={handleDownloadInjectionScheduleCsv} disabled={!canExportReport}>
+                <FileDown size={16} />
+                Injection Schedule
+              </Button>
+              <Button variant="secondary" onClick={handleDownloadBodyProgressCsv} disabled={!canExportReport}>
+                <FileDown size={16} />
+                Body Progress
+              </Button>
+            </div>
+          </div>
         </div>
       </Card>
 
       <Card className="export-report-printable">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "14px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "14px", flexWrap: "wrap" }}>
           <div>
             <h2 style={{ fontSize: "1.3rem", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
               <FileText size={20} style={{ color: "var(--color-primary)" }} />
@@ -1360,6 +1525,7 @@ export const ExportCenterPage: React.FC = () => {
             ["History Logs", `${historyRows.length}`],
             ["Schedule Dates", `${scheduleDateRows.length}`],
             ["Half-Life Items", `${halfLifeRows.length}`],
+            ["Body Logs", `${bodyProgressRows.length}`],
           ].map(([label, value]) => (
             <div key={label}>
               <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase" }}>{label}</div>

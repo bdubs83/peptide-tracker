@@ -788,7 +788,7 @@ export const VaultPage: React.FC = () => {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
                         gap: "8px",
                         color: "var(--text-secondary)",
                         fontSize: "0.8rem",
@@ -812,7 +812,7 @@ export const VaultPage: React.FC = () => {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "1fr 1fr",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
                           gap: "8px",
                           marginTop: "10px",
                         }}
@@ -1182,7 +1182,7 @@ export const VaultPage: React.FC = () => {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "1fr 1fr",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
                           gap: "10px",
                           fontSize: "0.85rem",
                           color: "var(--text-secondary)",
@@ -1325,7 +1325,7 @@ export const VaultPage: React.FC = () => {
                 </Button>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px", marginBottom: "14px" }}>
                 {(() => {
                   const { remainingMg, percent } =
                     vialStatusByPeptideId.get(selectedPeptide.id) || {

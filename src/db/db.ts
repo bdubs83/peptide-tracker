@@ -121,6 +121,50 @@ export class PeptideVaultDatabase extends Dexie {
           });
         }
       });
+    this.version(5)
+      .stores({
+        peptides: "id, name, createdAt, vaultUserId, openVialId",
+        schedules: "id, peptideId, isActive, vaultUserId, openVialId",
+        injectionLogs: "id, peptideId, scheduledDate, status, vaultUserId, openVialId",
+        weightLogs: "id, date, createdAt",
+        appSettings: "key",
+        stockItems: "id, name, createdAt, receivedDate",
+        vaultUsers: "id, sortOrder",
+      })
+      .upgrade(async (transaction) => {
+        const nowIso = new Date().toISOString();
+        const timestampedTables = [
+          transaction.table<Peptide, string>("peptides"),
+          transaction.table<PeptideSchedule, string>("schedules"),
+          transaction.table<InjectionLog, string>("injectionLogs"),
+          transaction.table<WeightLog, string>("weightLogs"),
+          transaction.table<StockItem, string>("stockItems"),
+          transaction.table<VaultUser, string>("vaultUsers"),
+        ];
+
+        for (const table of timestampedTables) {
+          for (const record of await table.toArray()) {
+            const createdAt = record.createdAt || record.updatedAt || nowIso;
+            const updatedAt = record.updatedAt || record.createdAt || nowIso;
+            if (record.createdAt && record.updatedAt) continue;
+
+            await table.update(record.id, {
+              createdAt,
+              updatedAt,
+            });
+          }
+        }
+
+        const appSettings = transaction.table<AppSetting, string>("appSettings");
+        for (const setting of await appSettings.toArray()) {
+          if (setting.createdAt && setting.updatedAt) continue;
+
+          await appSettings.update(setting.key, {
+            createdAt: setting.createdAt || setting.updatedAt || nowIso,
+            updatedAt: setting.updatedAt || setting.createdAt || nowIso,
+          });
+        }
+      });
   }
 }
 

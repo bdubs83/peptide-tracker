@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { putAppSetting } from "./appSettings";
 
 const klowProtocolPattern = /KLOW\s*\/\s*KK[-\s]*10\s*Protocol/gi;
 const legacyNamesNormalizedKey = "legacyNamesNormalized";
@@ -47,9 +48,6 @@ export async function normalizeLegacyPeptideNames() {
       }
     }
 
-    await db.appSettings.put({
-      key: legacyNamesNormalizedKey,
-      value: true,
-    });
+    await putAppSetting(legacyNamesNormalizedKey, true);
   });
 }

@@ -27,4 +27,5 @@ export interface InjectionLog {
 
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
 }

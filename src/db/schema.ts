@@ -24,4 +24,7 @@ export interface AppSetting {
   disclaimerAccepted?: boolean;
   layoutMode?: LayoutMode;
   theme?: AppTheme;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }

@@ -887,7 +887,7 @@ export const AddPeptidePage: React.FC = () => {
                   key={row.id}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
                     gap: "10px",
                     padding: "10px",
                     borderRadius: "var(--border-radius-sm)",

@@ -46,18 +46,38 @@ export const getAppSettings = async () => {
   return resolveAppSettings(await db.appSettings.toArray());
 };
 
+export const putAppSetting = async (key: string, value: AppSetting["value"]) => {
+  const existing = await db.appSettings.get(key);
+  const nowIso = new Date().toISOString();
+
+  await db.appSettings.put({
+    ...existing,
+    key,
+    value,
+    createdAt: existing?.createdAt || nowIso,
+    updatedAt: nowIso,
+    deletedAt: undefined,
+  });
+};
+
 export const updateAppSettings = async (updates: Partial<Omit<AppSettings, "id">>) => {
+  const existing = await db.appSettings.get("main");
   const current = await getAppSettings();
   const next: AppSettings = {
     ...current,
     ...updates,
     id: "main",
   };
+  const nowIso = new Date().toISOString();
 
   await db.appSettings.put({
+    ...existing,
     key: "main",
     value: "main",
     ...next,
+    createdAt: existing?.createdAt || nowIso,
+    updatedAt: nowIso,
+    deletedAt: undefined,
   });
 
   return next;

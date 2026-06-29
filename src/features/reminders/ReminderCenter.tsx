@@ -34,19 +34,21 @@ const getNotificationPermission = () => {
   return Notification.permission;
 };
 
-const showDeviceNotification = async (title: string, body: string) => {
+export const showDeviceNotification = async (title: string, body: string) => {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
 
   if ("serviceWorker" in navigator) {
     try {
-      const registration = await navigator.serviceWorker.ready;
-      await registration.showNotification(title, {
-        body,
-        icon: "/icon-192.png",
-        badge: "/icon-192.png",
-        tag: "inner-circle-injection-reminder",
-      });
-      return;
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration) {
+        await registration.showNotification(title, {
+          body,
+          icon: "/icon-192.png",
+          badge: "/icon-192.png",
+          tag: "inner-circle-injection-reminder",
+        });
+        return;
+      }
     } catch {
       // Fall back to the basic Notification API below.
     }

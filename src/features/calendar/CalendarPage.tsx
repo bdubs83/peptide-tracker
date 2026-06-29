@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { db } from "../../db/db";
+import { putAppSetting } from "../../db/appSettings";
 import { ensureDefaultVaultUser } from "../../db/vaultUsers";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
@@ -547,10 +548,7 @@ export const CalendarPage: React.FC = () => {
       }
 
       if (createdEventIds.length > 0) {
-        await db.appSettings.put({
-          key: googleSyncedEventIdsKey,
-          value: [...new Set([...googleSyncedEventIds, ...createdEventIds])],
-        });
+        await putAppSetting(googleSyncedEventIdsKey, [...new Set([...googleSyncedEventIds, ...createdEventIds])]);
       }
 
       setGoogleSyncMessage(
@@ -564,7 +562,7 @@ export const CalendarPage: React.FC = () => {
   };
 
   const handleClearGoogleCalendarSyncMarks = async () => {
-    await db.appSettings.put({ key: googleSyncedEventIdsKey, value: [] });
+    await putAppSetting(googleSyncedEventIdsKey, []);
     setGoogleSyncMessage("Google Calendar added markers were cleared on this device.");
   };
 

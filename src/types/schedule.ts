@@ -39,4 +39,5 @@ export interface PeptideSchedule {
 
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
 }

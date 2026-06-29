@@ -13,4 +13,5 @@ export interface WeightLog {
   customMeasurements?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
 }

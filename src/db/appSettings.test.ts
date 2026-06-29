@@ -38,4 +38,15 @@ describe("app settings", () => {
 
     expect(settings.theme).toBe("fun");
   });
+
+  it("timestamps individual settings when they are saved", async () => {
+    const { putAppSetting } = await loadSettingsModule();
+    await putAppSetting("autoSyncEnabled", true);
+
+    const { db } = await import("./db");
+    const setting = await db.appSettings.get("autoSyncEnabled");
+
+    expect(setting?.createdAt).toEqual(expect.any(String));
+    expect(setting?.updatedAt).toEqual(expect.any(String));
+  });
 });

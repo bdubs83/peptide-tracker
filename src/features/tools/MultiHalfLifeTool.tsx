@@ -889,8 +889,8 @@ export const MultiHalfLifeTool: React.FC = () => {
   return (
     <div className="fade-in" style={{ display: "grid", gap: "14px" }}>
       <Card>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
-          <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0, flex: "1 1 220px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--color-primary)" }}>
               <Activity size={18} />
               <p style={{ fontSize: "0.78rem", fontWeight: 900, textTransform: "uppercase" }}>Half-Life</p>
@@ -904,7 +904,7 @@ export const MultiHalfLifeTool: React.FC = () => {
                 : "Compare curves, schedules, and estimated build-up over time."}
             </p>
           </div>
-          <Button variant={combined ? "success" : "secondary"} onClick={() => setCombined((value) => !value)}>
+          <Button variant={combined ? "success" : "secondary"} onClick={() => setCombined((value) => !value)} style={{ flex: "0 0 auto" }}>
             Combined
           </Button>
         </div>
@@ -1142,7 +1142,7 @@ export const MultiHalfLifeTool: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(96px, 1fr) 82px minmax(150px, 1.2fr)", gap: "8px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: "8px" }}>
                     <label style={{ display: "grid", gap: "5px" }}>
                       <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase" }}>
                         Dose
