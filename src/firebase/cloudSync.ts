@@ -81,6 +81,14 @@ const removeSyncMetadata = (data: CloudRecord) => {
   return record as SyncRecord;
 };
 
+const shouldSyncRecord = (collectionName: SyncCollectionName, record: SyncRecord) => {
+  if (collectionName === "injectionLogs") return (record as InjectionLog).status !== "scheduled";
+  return true;
+};
+
+const getSyncableRecords = (collectionName: SyncCollectionName, records: SyncRecord[]) =>
+  records.filter((record) => shouldSyncRecord(collectionName, record));
+
 const getLocalRecords = async (collectionName: SyncCollectionName): Promise<SyncRecord[]> => {
   if (collectionName === "peptides") return db.peptides.toArray();
   if (collectionName === "schedules") return db.schedules.toArray();
@@ -93,7 +101,10 @@ const getLocalRecords = async (collectionName: SyncCollectionName): Promise<Sync
 
 const getCloudRecords = async (user: User, collectionName: SyncCollectionName): Promise<SyncRecord[]> => {
   const snapshot = await getDocs(userCollection(user, collectionName));
-  return snapshot.docs.map((item) => removeSyncMetadata(item.data() as CloudRecord));
+  return getSyncableRecords(
+    collectionName,
+    snapshot.docs.map((item) => removeSyncMetadata(item.data() as CloudRecord))
+  );
 };
 
 const putLocalRecords = async (collectionName: SyncCollectionName, records: SyncRecord[]) => {
@@ -148,7 +159,7 @@ export async function getLocalDataCounts(): Promise<CloudDataCounts> {
   return {
     peptides: await db.peptides.count(),
     schedules: await db.schedules.count(),
-    injectionLogs: await db.injectionLogs.count(),
+    injectionLogs: await db.injectionLogs.where("status").notEqual("scheduled").count(),
     weightLogs: await db.weightLogs.count(),
     stockItems: await db.stockItems.count(),
     vaultUsers: await db.vaultUsers.count(),
@@ -159,7 +170,7 @@ export async function getLocalDataCounts(): Promise<CloudDataCounts> {
 export async function getCloudDataCounts(user: User): Promise<CloudDataCounts> {
   const counts = {} as CloudDataCounts;
   for (const collectionName of collectionNames) {
-    counts[collectionName] = (await getDocs(userCollection(user, collectionName))).size;
+    counts[collectionName] = (await getCloudRecords(user, collectionName)).length;
   }
   return counts;
 }
@@ -168,7 +179,7 @@ export async function compareLocalAndCloudData(user: User): Promise<CloudCollect
   const comparison: CloudCollectionComparison[] = [];
 
   for (const collectionName of collectionNames) {
-    const localRecords = await getLocalRecords(collectionName);
+    const localRecords = getSyncableRecords(collectionName, await getLocalRecords(collectionName));
     const cloudRecords = await getCloudRecords(user, collectionName);
     const localById = new Map(localRecords.map((record) => [getRecordId(collectionName, record), record]));
     const cloudById = new Map(cloudRecords.map((record) => [getRecordId(collectionName, record), record]));
@@ -211,7 +222,7 @@ export async function uploadLocalDataToCloud(user: User): Promise<void> {
 
   for (const collectionName of collectionNames) {
     await clearCloudCollection(user, collectionName);
-    const records = await getLocalRecords(collectionName);
+    const records = getSyncableRecords(collectionName, await getLocalRecords(collectionName));
     for (const record of records) {
       await setDoc(doc(firestoreDb, "users", user.uid, collectionName, getRecordId(collectionName, record)), removeUndefinedFields({
         ...record,
@@ -245,13 +256,7 @@ export async function restoreCloudDataToLocal(user: User): Promise<void> {
   const cloudData = new Map<SyncCollectionName, SyncRecord[]>();
 
   for (const collectionName of collectionNames) {
-    const snapshot = await getDocs(userCollection(user, collectionName));
-    cloudData.set(
-      collectionName,
-      snapshot.docs.map((item) => {
-        return removeSyncMetadata(item.data() as CloudRecord);
-      })
-    );
+    cloudData.set(collectionName, await getCloudRecords(user, collectionName));
   }
 
   await db.transaction(
@@ -269,10 +274,7 @@ export async function restoreCloudDataToLocal(user: User): Promise<void> {
 
 export async function mergeCloudDataIntoLocal(user: User): Promise<void> {
   for (const collectionName of collectionNames) {
-    const snapshot = await getDocs(userCollection(user, collectionName));
-    const records = snapshot.docs.map((item) => {
-      return removeSyncMetadata(item.data() as CloudRecord);
-    });
+    const records = await getCloudRecords(user, collectionName);
     await putLocalRecords(collectionName, records);
   }
   await db.appSettings.put({ key: "lastCloudMergeAt", value: new Date().toISOString() });
