@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signOut, type User } from "firebase/auth";
 import { db } from "../../db/db";
+import { activeRecords } from "../../db/activeRecords";
 import { Card } from "../../components/Card";
 import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
@@ -15,7 +16,18 @@ import {
   hasCloudProfile,
   mergeCloudDataIntoLocal,
   restoreCloudDataToLocal,
+  runAutoSync,
   uploadLocalDataToCloud,
+  autoSyncEnabledKey,
+  lastAutoSyncAtKey,
+  lastAutoSyncConflictsKey,
+  lastAutoSyncErrorKey,
+  lastAutoSyncResultKey,
+  lastAutoSyncStatusKey,
+  parseAutoSyncConflicts,
+  resolveAutoSyncConflict,
+  type AutoSyncResult,
+  type AutoSyncConflict,
   type CloudDataCounts,
   type CloudCollectionComparison,
 } from "../../firebase/cloudSync";
@@ -531,8 +543,6 @@ type ProfilePageProps = {
   mode?: "full" | "bodyTracker";
 };
 
-const autoSyncEnabledKey = "autoSyncEnabled";
-
 const getComparisonDifferenceCount = (comparison: CloudCollectionComparison[] | null) =>
   comparison
     ? comparison.reduce((sum, item) => sum + item.localOnly.length + item.cloudOnly.length, 0)
@@ -547,6 +557,27 @@ const hasComparisonDifferences = (comparison: CloudCollectionComparison[] | null
 
 const hasComparisonConflicts = (comparison: CloudCollectionComparison[] | null) =>
   Boolean(comparison?.some((item) => item.localOnly.length > 0 && item.cloudOnly.length > 0));
+
+const isAutoSyncResult = (value: unknown): value is AutoSyncResult =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof (value as Partial<AutoSyncResult>).uploaded === "number" &&
+      typeof (value as Partial<AutoSyncResult>).downloaded === "number" &&
+      typeof (value as Partial<AutoSyncResult>).conflicts === "number"
+  );
+
+const getConflictSummary = (record: AutoSyncConflict["localRecord"]) => {
+  if ("peptideNameSnapshot" in record && typeof record.peptideNameSnapshot === "string") {
+    return `${record.peptideNameSnapshot} ${"scheduledDate" in record ? record.scheduledDate : ""}`.trim();
+  }
+  if ("name" in record && typeof record.name === "string") return record.name;
+  if ("displayName" in record && typeof record.displayName === "string") return record.displayName;
+  if ("date" in record && typeof record.date === "string") return record.date;
+  if ("key" in record && typeof record.key === "string") return record.key;
+  return "Record";
+};
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const location = useLocation();
@@ -627,15 +658,35 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
   // Load appSettings and weightLogs
   const settingsList = useLiveQuery(() => db.appSettings.toArray());
-  const weightLogs = useLiveQuery(() => db.weightLogs.reverse().sortBy("date"));
+  const weightLogs = useLiveQuery(async () => activeRecords(await db.weightLogs.reverse().sortBy("date")));
   const lastBackupSetting = settingsList?.find((item) => item.key === "lastBackupAt");
   const lastBackupLabel =
     typeof lastBackupSetting?.value === "string"
       ? new Date(lastBackupSetting.value).toLocaleString()
       : "No backup created yet";
+  const lastAutoSyncError = settingsList?.find((item) => item.key === lastAutoSyncErrorKey)?.value;
+  const lastAutoSyncAt = settingsList?.find((item) => item.key === lastAutoSyncAtKey)?.value;
+  const lastAutoSyncConflicts = parseAutoSyncConflicts(
+    settingsList?.find((item) => item.key === lastAutoSyncConflictsKey)?.value
+  );
+  const lastAutoSyncStatus = settingsList?.find((item) => item.key === lastAutoSyncStatusKey)?.value;
+  const lastAutoSyncResultValue = settingsList?.find((item) => item.key === lastAutoSyncResultKey)?.value;
+  const lastAutoSyncResult = isAutoSyncResult(lastAutoSyncResultValue) ? lastAutoSyncResultValue : null;
+  const lastAutoSyncLabel =
+    typeof lastAutoSyncAt === "string" && lastAutoSyncAt
+      ? new Date(lastAutoSyncAt).toLocaleString()
+      : "Not synced yet";
   const autoSyncEnabled = settingsList?.some((item) => item.key === autoSyncEnabledKey && item.value === true) ?? false;
   const autoSyncDifferenceCount = getComparisonDifferenceCount(cloudComparison);
-  const autoSyncStatus = isAutoSyncReviewOpen && hasComparisonConflicts(cloudComparison)
+  const autoSyncStatus = typeof lastAutoSyncError === "string" && lastAutoSyncError
+    ? "Needs review"
+    : lastAutoSyncConflicts.length > 0
+    ? "Needs review"
+    : lastAutoSyncStatus === "syncing"
+    ? "Syncing now"
+    : lastAutoSyncStatus === "needsReview"
+    ? "Needs review"
+    : isAutoSyncReviewOpen && hasComparisonConflicts(cloudComparison)
     ? "Needs review"
     : isAutoSyncReviewOpen && autoSyncDifferenceCount > 0
     ? `${autoSyncDifferenceCount} changes pending`
@@ -866,6 +917,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
       if (!hasComparisonDifferences(comparison)) {
         await putAppSetting(autoSyncEnabledKey, true);
+        await runAutoSync(cloudUser);
         setIsAutoSyncReviewOpen(false);
         return;
       }
@@ -892,6 +944,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
       await mergeCloudDataIntoLocal(cloudUser);
       await uploadLocalDataToCloud(cloudUser);
       await putAppSetting(autoSyncEnabledKey, true);
+      await runAutoSync(cloudUser);
       setCloudComparison(await compareLocalAndCloudData(cloudUser));
       setIsAutoSyncReviewOpen(false);
     }, "Auto Sync is on. Missing records were merged first.");
@@ -913,6 +966,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     runAccountAction(async () => {
       await uploadLocalDataToCloud(cloudUser);
       await putAppSetting(autoSyncEnabledKey, true);
+      await runAutoSync(cloudUser);
       setCloudComparison(await compareLocalAndCloudData(cloudUser));
       setIsAutoSyncReviewOpen(false);
     }, "Auto Sync is on. This device was used as the account source.");
@@ -934,9 +988,38 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     runAccountAction(async () => {
       await restoreCloudDataToLocal(cloudUser);
       await putAppSetting(autoSyncEnabledKey, true);
+      await runAutoSync(cloudUser);
       setCloudComparison(await compareLocalAndCloudData(cloudUser));
       setIsAutoSyncReviewOpen(false);
     }, "Auto Sync is on. Account data was restored to this device first.");
+  };
+
+  const handleRunAutoSyncNow = () => {
+    if (!cloudUser) {
+      setAuthMessage("Sign in before running Auto Sync.");
+      return;
+    }
+
+    runAccountAction(async () => {
+      await putAppSetting(lastAutoSyncStatusKey, "syncing");
+      const result = await runAutoSync(cloudUser);
+      await putAppSetting(lastAutoSyncResultKey, result);
+      await putAppSetting(lastAutoSyncErrorKey, "");
+      await putAppSetting(lastAutoSyncStatusKey, result.conflicts > 0 ? "needsReview" : "idle");
+      setCloudComparison(await compareLocalAndCloudData(cloudUser));
+    }, "Auto Sync checked for changes.");
+  };
+
+  const handleResolveConflict = (conflict: AutoSyncConflict, winner: "local" | "cloud") => {
+    if (!cloudUser) return;
+    runAccountAction(async () => {
+      await resolveAutoSyncConflict(cloudUser, conflict, winner);
+      const result = await runAutoSync(cloudUser);
+      await putAppSetting(lastAutoSyncResultKey, result);
+      await putAppSetting(lastAutoSyncErrorKey, "");
+      await putAppSetting(lastAutoSyncStatusKey, result.conflicts > 0 ? "needsReview" : "idle");
+      setCloudComparison(await compareLocalAndCloudData(cloudUser));
+    }, winner === "local" ? "Device version was kept." : "Account version was kept.");
   };
 
   const handleUploadLocalToCloud = () => {
@@ -1094,7 +1177,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
   const handleDeleteEntry = async () => {
     if (!entryToDelete) return;
-    await db.weightLogs.delete(entryToDelete.id);
+    const nowIso = new Date().toISOString();
+    await db.weightLogs.update(entryToDelete.id, {
+      deletedAt: nowIso,
+      updatedAt: nowIso,
+    });
     if (editingEntryId === entryToDelete.id) setEditingEntryId(null);
     setEntryToDelete(null);
   };
@@ -1421,16 +1508,42 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                       <div style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "3px" }}>
                         Status: {autoSyncStatus}
                       </div>
+                      {typeof lastAutoSyncError === "string" && lastAutoSyncError && (
+                        <div style={{ color: "var(--color-warning)", fontSize: "0.8rem", marginTop: "3px", lineHeight: 1.35 }}>
+                          {lastAutoSyncError}
+                        </div>
+                      )}
+                      {autoSyncEnabled && (
+                        <div style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "3px", lineHeight: 1.35 }}>
+                          Last sync: {lastAutoSyncLabel}
+                          {lastAutoSyncResult
+                            ? ` • Up ${lastAutoSyncResult.uploaded} / Down ${lastAutoSyncResult.downloaded} / Conflicts ${lastAutoSyncResult.conflicts}`
+                            : ""}
+                        </div>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleAutoSyncToggle}
-                      disabled={isAuthBusy}
-                      className={`btn ${autoSyncEnabled ? "btn-success" : "btn-secondary"}`}
-                      style={{ minWidth: "92px" }}
-                    >
-                      {autoSyncEnabled ? "On" : "Off"}
-                    </button>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      {autoSyncEnabled && (
+                        <button
+                          type="button"
+                          onClick={handleRunAutoSyncNow}
+                          disabled={isAuthBusy || lastAutoSyncStatus === "syncing"}
+                          className="btn btn-secondary"
+                          style={{ minWidth: "92px" }}
+                        >
+                          Sync Now
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleAutoSyncToggle}
+                        disabled={isAuthBusy}
+                        className={`btn ${autoSyncEnabled ? "btn-success" : "btn-secondary"}`}
+                        style={{ minWidth: "92px" }}
+                      >
+                        {autoSyncEnabled ? "On" : "Off"}
+                      </button>
+                    </div>
                   </div>
 
                   {isAutoSyncReviewOpen && cloudComparison && (
@@ -1449,6 +1562,42 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                           Restore Account Here
                         </Button>
                       </div>
+                    </div>
+                  )}
+
+                  {lastAutoSyncConflicts.length > 0 && (
+                    <div style={{ display: "grid", gap: "8px" }}>
+                      <div style={{ color: "var(--text-primary)", fontWeight: 800, fontSize: "0.9rem" }}>
+                        Conflicts to Review
+                      </div>
+                      {lastAutoSyncConflicts.map((conflict) => (
+                        <div
+                          key={`${conflict.collectionName}-${conflict.id}`}
+                          style={{
+                            border: "1px solid rgba(245, 158, 11, 0.35)",
+                            background: "rgba(245, 158, 11, 0.08)",
+                            borderRadius: "var(--border-radius-sm)",
+                            padding: "10px",
+                            display: "grid",
+                            gap: "8px",
+                          }}
+                        >
+                          <div style={{ color: "var(--text-primary)", fontWeight: 800 }}>
+                            {cloudCollectionLabels[conflict.collectionName] || conflict.collectionName}: {conflict.label}
+                          </div>
+                          <div style={{ color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.45 }}>
+                            Device: {getConflictSummary(conflict.localRecord)} · Account: {getConflictSummary(conflict.cloudRecord)}
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px" }}>
+                            <Button variant="primary" onClick={() => handleResolveConflict(conflict, "local")} disabled={isAuthBusy}>
+                              Keep Device
+                            </Button>
+                            <Button variant="secondary" onClick={() => handleResolveConflict(conflict, "cloud")} disabled={isAuthBusy}>
+                              Keep Account
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

@@ -4,8 +4,10 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   serverTimestamp,
   setDoc,
+  type Unsubscribe,
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { db } from "../db/db";
@@ -19,7 +21,7 @@ import type { StockItem } from "../types/stock";
 import type { VaultUser } from "../types/vaultUser";
 import type { AppSetting } from "../db/schema";
 
-type SyncCollectionName =
+export type SyncCollectionName =
   | "peptides"
   | "schedules"
   | "injectionLogs"
@@ -50,6 +52,35 @@ export type CloudCollectionComparison = {
   localOnly: CloudRecordDifference[];
   cloudOnly: CloudRecordDifference[];
 };
+export type AutoSyncResult = {
+  uploaded: number;
+  downloaded: number;
+  conflicts: number;
+};
+export type AutoSyncConflict = {
+  collectionName: SyncCollectionName;
+  id: string;
+  label: string;
+  localUpdatedAt: string;
+  cloudUpdatedAt: string;
+  localRecord: SyncRecord;
+  cloudRecord: SyncRecord;
+};
+
+export const autoSyncEnabledKey = "autoSyncEnabled";
+export const lastAutoSyncAtKey = "lastAutoSyncAt";
+export const lastAutoSyncErrorKey = "lastAutoSyncError";
+export const lastAutoSyncConflictsKey = "lastAutoSyncConflicts";
+export const lastAutoSyncResultKey = "lastAutoSyncResult";
+export const lastAutoSyncStatusKey = "lastAutoSyncStatus";
+const localOnlyAppSettingKeys = new Set([
+  autoSyncEnabledKey,
+  lastAutoSyncAtKey,
+  lastAutoSyncErrorKey,
+  lastAutoSyncConflictsKey,
+  lastAutoSyncResultKey,
+  lastAutoSyncStatusKey,
+]);
 
 const collectionNames: SyncCollectionName[] = [
   "peptides",
@@ -84,6 +115,7 @@ const removeSyncMetadata = (data: CloudRecord) => {
 
 const shouldSyncRecord = (collectionName: SyncCollectionName, record: SyncRecord) => {
   if (collectionName === "injectionLogs") return (record as InjectionLog).status !== "scheduled";
+  if (collectionName === "appSettings") return !localOnlyAppSettingKeys.has((record as AppSetting).key);
   return true;
 };
 
@@ -114,6 +146,16 @@ const getCloudRecords = async (user: User, collectionName: SyncCollectionName): 
   return getSyncableRecords(
     collectionName,
     snapshot.docs.map((item) => removeSyncMetadata(item.data() as CloudRecord))
+  );
+};
+
+const writeCloudRecord = async (user: User, collectionName: SyncCollectionName, record: SyncRecord) => {
+  await setDoc(
+    doc(firestoreDb, "users", user.uid, collectionName, getRecordId(collectionName, record)),
+    removeUndefinedFields({
+      ...record,
+      syncedAt: new Date().toISOString(),
+    }) as Record<string, unknown>
   );
 };
 
@@ -174,7 +216,7 @@ export async function getLocalDataCounts(): Promise<CloudDataCounts> {
     weightLogs: await db.weightLogs.count(),
     stockItems: await db.stockItems.count(),
     vaultUsers: await db.vaultUsers.count(),
-    appSettings: await db.appSettings.count(),
+    appSettings: getSyncableRecords("appSettings", await db.appSettings.toArray()).length,
   };
 }
 
@@ -217,6 +259,147 @@ export async function compareLocalAndCloudData(user: User): Promise<CloudCollect
   return comparison;
 }
 
+const getRecordUpdatedAt = (record: SyncRecord) => {
+  if ("updatedAt" in record && typeof record.updatedAt === "string") return record.updatedAt;
+  if ("createdAt" in record && typeof record.createdAt === "string") return record.createdAt;
+  return "";
+};
+
+const recordsDiffer = (left: SyncRecord, right: SyncRecord) => {
+  return JSON.stringify(removeUndefinedFields(left)) !== JSON.stringify(removeUndefinedFields(right));
+};
+
+const serializeConflicts = (conflicts: AutoSyncConflict[]) => JSON.stringify(conflicts);
+
+export const parseAutoSyncConflicts = (value: unknown): AutoSyncConflict[] => {
+  if (typeof value !== "string" || !value.trim()) return [];
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter((item): item is AutoSyncConflict => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as Partial<AutoSyncConflict>;
+      return (
+        typeof candidate.collectionName === "string" &&
+        collectionNames.includes(candidate.collectionName as SyncCollectionName) &&
+        typeof candidate.id === "string" &&
+        typeof candidate.label === "string" &&
+        Boolean(candidate.localRecord) &&
+        Boolean(candidate.cloudRecord)
+      );
+    });
+  } catch {
+    return [];
+  }
+};
+
+export async function runAutoSync(user: User): Promise<AutoSyncResult> {
+  const result: AutoSyncResult = {
+    uploaded: 0,
+    downloaded: 0,
+    conflicts: 0,
+  };
+  const conflicts: AutoSyncConflict[] = [];
+
+  const profile = await getDoc(userDoc(user));
+  if (profile.exists() && profile.data().uploadStatus === "inProgress") {
+    throw new Error("The account copy has an unfinished upload. Finish or repair that before Auto Sync runs.");
+  }
+
+  for (const collectionName of collectionNames) {
+    const localRecords = getSyncableRecords(collectionName, await getLocalRecords(collectionName));
+    const cloudRecords = await getCloudRecords(user, collectionName);
+    const localById = new Map(localRecords.map((record) => [getRecordId(collectionName, record), record]));
+    const cloudById = new Map(cloudRecords.map((record) => [getRecordId(collectionName, record), record]));
+    const recordIds = new Set([...localById.keys(), ...cloudById.keys()]);
+    const recordsToPutLocal: SyncRecord[] = [];
+
+    for (const recordId of recordIds) {
+      const localRecord = localById.get(recordId);
+      const cloudRecord = cloudById.get(recordId);
+
+      if (localRecord && !cloudRecord) {
+        await writeCloudRecord(user, collectionName, localRecord);
+        result.uploaded += 1;
+        continue;
+      }
+
+      if (!localRecord && cloudRecord) {
+        recordsToPutLocal.push(cloudRecord);
+        result.downloaded += 1;
+        continue;
+      }
+
+      if (!localRecord || !cloudRecord || !recordsDiffer(localRecord, cloudRecord)) continue;
+
+      const localUpdatedAt = getRecordUpdatedAt(localRecord);
+      const cloudUpdatedAt = getRecordUpdatedAt(cloudRecord);
+
+      if (localUpdatedAt > cloudUpdatedAt) {
+        await writeCloudRecord(user, collectionName, localRecord);
+        result.uploaded += 1;
+      } else if (cloudUpdatedAt > localUpdatedAt) {
+        recordsToPutLocal.push(cloudRecord);
+        result.downloaded += 1;
+      } else {
+        result.conflicts += 1;
+        conflicts.push({
+          collectionName,
+          id: recordId,
+          label: getRecordLabel(collectionName, localRecord),
+          localUpdatedAt,
+          cloudUpdatedAt,
+          localRecord,
+          cloudRecord,
+        });
+      }
+    }
+
+    if (recordsToPutLocal.length > 0) {
+      await putLocalRecords(collectionName, recordsToPutLocal);
+    }
+  }
+
+  await putAppSetting(lastAutoSyncAtKey, new Date().toISOString());
+  await putAppSetting(lastAutoSyncConflictsKey, serializeConflicts(conflicts));
+  return result;
+}
+
+export async function resolveAutoSyncConflict(
+  user: User,
+  conflict: AutoSyncConflict,
+  winner: "local" | "cloud"
+): Promise<void> {
+  const record = winner === "local" ? conflict.localRecord : conflict.cloudRecord;
+
+  if (winner === "local") {
+    await writeCloudRecord(user, conflict.collectionName, record);
+  } else {
+    await putLocalRecords(conflict.collectionName, [record]);
+  }
+
+  const existingConflictsRow = await db.appSettings.get(lastAutoSyncConflictsKey);
+  const remainingConflicts = parseAutoSyncConflicts(existingConflictsRow?.value).filter(
+    (item) => !(item.collectionName === conflict.collectionName && item.id === conflict.id)
+  );
+  await putAppSetting(lastAutoSyncConflictsKey, serializeConflicts(remainingConflicts));
+  await putAppSetting(lastAutoSyncStatusKey, remainingConflicts.length > 0 ? "needsReview" : "idle");
+}
+
+export function subscribeToCloudSyncChanges(user: User, onChange: () => void): Unsubscribe {
+  const unsubscribers = collectionNames.map((collectionName) =>
+    onSnapshot(userCollection(user, collectionName), () => {
+      onChange();
+    })
+  );
+
+  return () => {
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+  };
+}
+
 export async function uploadLocalDataToCloud(user: User): Promise<void> {
   const uploadStartedAt = new Date().toISOString();
   await setDoc(
@@ -235,10 +418,7 @@ export async function uploadLocalDataToCloud(user: User): Promise<void> {
     await clearCloudCollection(user, collectionName);
     const records = getSyncableRecords(collectionName, await getLocalRecords(collectionName));
     for (const record of records) {
-      await setDoc(doc(firestoreDb, "users", user.uid, collectionName, getRecordId(collectionName, record)), removeUndefinedFields({
-        ...record,
-        syncedAt: new Date().toISOString(),
-      }) as Record<string, unknown>);
+      await writeCloudRecord(user, collectionName, record);
     }
   }
 

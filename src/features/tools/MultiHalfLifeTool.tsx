@@ -4,6 +4,7 @@ import { Activity, CalendarDays, Eye, EyeOff, Plus, Trash2, Users } from "lucide
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { db } from "../../db/db";
+import { activeRecords } from "../../db/activeRecords";
 import { ensureDefaultVaultUser } from "../../db/vaultUsers";
 import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
@@ -759,10 +760,10 @@ export const MultiHalfLifeTool: React.FC = () => {
   const [stackMessage, setStackMessage] = useState("");
   const [days, setDays] = useState(30);
   const [combined, setCombined] = useState(false);
-  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
-  const peptides = useLiveQuery(() => db.peptides.toArray());
-  const schedules = useLiveQuery(() => db.schedules.toArray());
-  const logs = useLiveQuery(() => db.injectionLogs.toArray());
+  const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
+  const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
+  const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()));
+  const logs = useLiveQuery(async () => activeRecords(await db.injectionLogs.toArray()));
   const activeVaultUsers = useMemo(() => vaultUsers?.filter((user) => !user.isArchived) || [], [vaultUsers]);
   const effectiveSelectedUserId = activeVaultUsers.some((user) => user.id === selectedUserId)
     ? selectedUserId

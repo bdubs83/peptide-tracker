@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../db/db";
+import { activeRecords, isActiveRecord } from "../../db/activeRecords";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
 import { Input } from "../../components/Input";
@@ -371,16 +372,13 @@ export const PeptideDetailPage: React.FC = () => {
   const data = useLiveQuery(async () => {
     if (!id) return null;
     const peptide = await db.peptides.get(id);
-    const peptideSchedules = await db.schedules.where("peptideId").equals(id).toArray();
+    if (!peptide || !isActiveRecord(peptide)) return null;
+    const peptideSchedules = activeRecords(await db.schedules.where("peptideId").equals(id).toArray());
     const schedule = getPreferredSchedule(peptideSchedules, id);
-    const peptides = await db.peptides.toArray();
-    const schedules = await db.schedules.toArray();
-    const logsList = await db.injectionLogs
-      .where("peptideId")
-      .equals(id)
-      .reverse()
-      .sortBy("scheduledDate");
-    const allLogs = await db.injectionLogs.toArray();
+    const peptides = activeRecords(await db.peptides.toArray());
+    const schedules = activeRecords(await db.schedules.toArray());
+    const logsList = activeRecords(await db.injectionLogs.where("peptideId").equals(id).reverse().sortBy("scheduledDate"));
+    const allLogs = activeRecords(await db.injectionLogs.toArray());
     const settings = await db.appSettings.toArray();
     return { peptide, schedule, peptides, schedules, logsList, allLogs, settings };
   }, [id]);

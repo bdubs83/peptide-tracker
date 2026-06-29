@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../db/db";
+import { activeRecords } from "../../db/activeRecords";
 import { createVaultUser, ensureDefaultVaultUser, renameVaultUser } from "../../db/vaultUsers";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
@@ -78,11 +79,11 @@ export const VaultPage: React.FC = () => {
   const layoutMode = useEffectiveLayoutMode();
   const today = useMemo(() => getLocalDateString(), []);
 
-  const peptides = useLiveQuery(() => db.peptides.toArray());
-  const schedules = useLiveQuery(() => db.schedules.toArray());
-  const logs = useLiveQuery(() => db.injectionLogs.toArray());
-  const stockItems = useLiveQuery(() => db.stockItems.orderBy("createdAt").reverse().toArray());
-  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
+  const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
+  const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()));
+  const logs = useLiveQuery(async () => activeRecords(await db.injectionLogs.toArray()));
+  const stockItems = useLiveQuery(async () => activeRecords(await db.stockItems.orderBy("createdAt").reverse().toArray()));
+  const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
   const settings = useLiveQuery(() => db.appSettings.toArray());
   const syringeDisplayMode = settings?.find((item) => item.key === "pref_displayMode")?.value === "mL" ? "mL" : "units";
 
@@ -228,7 +229,11 @@ export const VaultPage: React.FC = () => {
 
   const handleDeleteStockItem = async (id: string) => {
     if (!confirm("Remove this stock item?")) return;
-    await db.stockItems.delete(id);
+    const nowIso = new Date().toISOString();
+    await db.stockItems.update(id, {
+      deletedAt: nowIso,
+      updatedAt: nowIso,
+    });
   };
 
   const closeRefillModal = () => {
@@ -272,7 +277,7 @@ export const VaultPage: React.FC = () => {
     const oldOpenVialId = refillRequest.peptide.openVialId || refillRequest.peptide.id;
 
     await db.transaction("rw", [db.peptides, db.schedules, db.stockItems], async () => {
-      const sharedPeptides = await db.peptides.where("openVialId").equals(oldOpenVialId).toArray();
+      const sharedPeptides = activeRecords(await db.peptides.where("openVialId").equals(oldOpenVialId).toArray());
       if (!sharedPeptides.some((peptide) => peptide.id === refillRequest.peptide.id)) {
         sharedPeptides.push(refillRequest.peptide);
       }
@@ -295,7 +300,7 @@ export const VaultPage: React.FC = () => {
         });
       }
 
-      const linkedSchedules = await db.schedules.where("openVialId").equals(oldOpenVialId).toArray();
+      const linkedSchedules = activeRecords(await db.schedules.where("openVialId").equals(oldOpenVialId).toArray());
       for (const schedule of linkedSchedules) {
         await db.schedules.update(schedule.id, {
           openVialId: newOpenVialId,
@@ -303,7 +308,7 @@ export const VaultPage: React.FC = () => {
         });
       }
 
-      const legacyScheduleRows = (await db.schedules.toArray()).filter(
+      const legacyScheduleRows = activeRecords(await db.schedules.toArray()).filter(
         (schedule) => sharedPeptideIds.has(schedule.peptideId) && !schedule.openVialId
       );
       for (const schedule of legacyScheduleRows) {

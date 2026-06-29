@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Bell, CalendarClock, ChevronDown, ChevronUp } from "lucide-react";
 import { db } from "../../db/db";
+import { activeRecords } from "../../db/activeRecords";
 import { ensureDefaultVaultUser } from "../../db/vaultUsers";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
@@ -135,10 +136,10 @@ const eventStatusLabel = (event: DayEvent, date: string, today: string, leadDate
 export const ReminderCenter: React.FC = () => {
   const navigate = useNavigate();
   const settings = useLiveQuery(() => db.appSettings.toArray());
-  const peptides = useLiveQuery(() => db.peptides.toArray());
-  const schedules = useLiveQuery(() => db.schedules.toArray());
-  const logs = useLiveQuery(() => db.injectionLogs.toArray());
-  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
+  const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
+  const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()));
+  const logs = useLiveQuery(async () => activeRecords(await db.injectionLogs.toArray()));
+  const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
   const [isCollapsed, setIsCollapsed] = React.useState(false);
   const [now, setNow] = React.useState(new Date());
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../db/db";
+import { activeRecords, isActiveRecord } from "../../db/activeRecords";
 import { ensureDefaultVaultUser } from "../../db/vaultUsers";
 import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
@@ -130,14 +131,15 @@ export const AddPeptidePage: React.FC = () => {
   const existingData = useLiveQuery(async () => {
     if (!id) return null;
     const peptide = await db.peptides.get(id);
-    const peptideSchedules = await db.schedules.where("peptideId").equals(id).toArray();
+    if (!peptide || !isActiveRecord(peptide)) return null;
+    const peptideSchedules = activeRecords(await db.schedules.where("peptideId").equals(id).toArray());
     const schedule = getPreferredSchedule(peptideSchedules, id);
-    const logsList = await db.injectionLogs.where("peptideId").equals(id).toArray();
+    const logsList = activeRecords(await db.injectionLogs.where("peptideId").equals(id).toArray());
     return { peptide, schedule, logsList };
   }, [id]);
   const settingsList = useLiveQuery(() => db.appSettings.toArray());
-  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
-  const openVialOptions = useLiveQuery(() => db.peptides.toArray());
+  const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
+  const openVialOptions = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
 
   // Form states
   const [name, setName] = useState("");

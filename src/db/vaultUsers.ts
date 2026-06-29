@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { activeRecords } from "./activeRecords";
 import { DEFAULT_VAULT_USER_ID, type VaultUser } from "../types/vaultUser";
 
 const userColors = ["#6366f1", "#10b981", "#f59e0b"];
@@ -13,7 +14,7 @@ export function getVaultUserColor(sortOrder: number) {
 
 export async function ensureDefaultVaultUser(): Promise<VaultUser> {
   const existing = await db.vaultUsers.get(DEFAULT_VAULT_USER_ID);
-  if (existing) return existing;
+  if (existing && !existing.deletedAt) return existing;
 
   const nowIso = new Date().toISOString();
   const user: VaultUser = {
@@ -29,7 +30,7 @@ export async function ensureDefaultVaultUser(): Promise<VaultUser> {
 }
 
 export async function createVaultUser(displayName: string): Promise<VaultUser | null> {
-  const users = await db.vaultUsers.orderBy("sortOrder").toArray();
+  const users = activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray());
   if (users.length >= 3) return null;
 
   const sortOrder = users.length + 1;

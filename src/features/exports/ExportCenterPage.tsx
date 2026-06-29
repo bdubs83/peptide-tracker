@@ -8,6 +8,7 @@ import { Card } from "../../components/Card";
 import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
 import { db } from "../../db/db";
+import { activeRecords } from "../../db/activeRecords";
 import { ensureDefaultVaultUser } from "../../db/vaultUsers";
 import type { InjectionLog } from "../../types/injectionLog";
 import type { Peptide } from "../../types/peptide";
@@ -516,12 +517,12 @@ export const ExportCenterPage: React.FC = () => {
     void ensureDefaultVaultUser();
   }, []);
 
-  const peptides = useLiveQuery(() => db.peptides.toArray(), []);
-  const schedules = useLiveQuery(() => db.schedules.toArray(), []);
-  const logs = useLiveQuery(() => db.injectionLogs.toArray(), []);
-  const stockItems = useLiveQuery(() => db.stockItems.toArray(), []);
-  const weightLogs = useLiveQuery(() => db.weightLogs.toArray(), []);
-  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray(), []);
+  const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()), []);
+  const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()), []);
+  const logs = useLiveQuery(async () => activeRecords(await db.injectionLogs.toArray()), []);
+  const stockItems = useLiveQuery(async () => activeRecords(await db.stockItems.toArray()), []);
+  const weightLogs = useLiveQuery(async () => activeRecords(await db.weightLogs.toArray()), []);
+  const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()), []);
 
   const isLoaded = peptides && schedules && logs && stockItems && weightLogs && vaultUsers;
   const userNameById = useMemo(() => makeUserNameMap(vaultUsers || []), [vaultUsers]);

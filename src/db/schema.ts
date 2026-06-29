@@ -15,7 +15,7 @@ export type AppSettings = {
   theme: AppTheme;
 };
 
-export type AppSettingValue = string | number | boolean | string[];
+export type AppSettingValue = string | number | boolean | string[] | Record<string, string | number | boolean>;
 
 export interface AppSetting {
   key: string;

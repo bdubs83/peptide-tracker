@@ -50,4 +50,18 @@ describe("cloud sync", () => {
       injectionLogs: 1,
     });
   });
+
+  it("does not count the local auto sync toggle as a syncable setting", async () => {
+    const { autoSyncEnabledKey, getLocalDataCounts } = await loadCloudSyncModule();
+    const { putAppSetting } = await import("../db/appSettings");
+    const { db } = await import("../db/db");
+
+    await putAppSetting(autoSyncEnabledKey, true);
+    await putAppSetting("pref_timezone", "America/New_York");
+
+    await expect(db.appSettings.count()).resolves.toBe(2);
+    await expect(getLocalDataCounts()).resolves.toMatchObject({
+      appSettings: 1,
+    });
+  });
 });

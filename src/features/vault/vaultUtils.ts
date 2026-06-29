@@ -1,4 +1,5 @@
 import { db } from "../../db/db";
+import { isActiveRecord } from "../../db/activeRecords";
 import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
 import type { InjectionLog } from "../../types/injectionLog";
@@ -14,9 +15,19 @@ export async function savePeptideWithSchedule(
 }
 
 export async function deletePeptideWithSchedule(peptideId: string): Promise<void> {
+  const nowIso = new Date().toISOString();
   await db.transaction("rw", [db.peptides, db.schedules], async () => {
-    await db.peptides.delete(peptideId);
-    await db.schedules.where("peptideId").equals(peptideId).delete();
+    await db.peptides.update(peptideId, {
+      deletedAt: nowIso,
+      updatedAt: nowIso,
+    });
+    const schedules = await db.schedules.where("peptideId").equals(peptideId).toArray();
+    for (const schedule of schedules) {
+      await db.schedules.update(schedule.id, {
+        deletedAt: nowIso,
+        updatedAt: nowIso,
+      });
+    }
   });
 }
 
@@ -25,6 +36,7 @@ export async function logInjectionEvent(log: InjectionLog): Promise<void> {
   const matchingLogs = await db.injectionLogs
     .where("peptideId")
     .equals(log.peptideId)
+    .filter(isActiveRecord)
     .filter((existingLog) => {
       const existingOpenVialId = existingLog.openVialId || existingLog.peptideId;
       return existingLog.scheduledDate === log.scheduledDate && existingOpenVialId === openVialId;
@@ -60,5 +72,9 @@ export async function logInjectionEvent(log: InjectionLog): Promise<void> {
 }
 
 export async function deleteInjectionLog(logId: string): Promise<void> {
-  await db.injectionLogs.delete(logId);
+  const nowIso = new Date().toISOString();
+  await db.injectionLogs.update(logId, {
+    deletedAt: nowIso,
+    updatedAt: nowIso,
+  });
 }

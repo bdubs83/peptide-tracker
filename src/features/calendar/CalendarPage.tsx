@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { db } from "../../db/db";
+import { activeRecords } from "../../db/activeRecords";
 import { putAppSetting } from "../../db/appSettings";
 import { ensureDefaultVaultUser } from "../../db/vaultUsers";
 import { Card } from "../../components/Card";
@@ -428,10 +429,10 @@ export const CalendarPage: React.FC = () => {
   const [currentMonth, setCurrentMonth] = useState(initialDate.getMonth()); // 0-indexed
 
   // Query database
-  const peptides = useLiveQuery(() => db.peptides.toArray());
-  const schedules = useLiveQuery(() => db.schedules.toArray());
-  const logs = useLiveQuery(() => db.injectionLogs.toArray());
-  const vaultUsers = useLiveQuery(() => db.vaultUsers.orderBy("sortOrder").toArray());
+  const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
+  const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()));
+  const logs = useLiveQuery(async () => activeRecords(await db.injectionLogs.toArray()));
+  const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
   const settings = useLiveQuery(() => db.appSettings.toArray());
   const googleSyncedEventIds = useMemo(() => {
     const value = settings?.find((setting) => setting.key === googleSyncedEventIdsKey)?.value;
@@ -682,7 +683,7 @@ export const CalendarPage: React.FC = () => {
     setCalendarRepairMessage("");
     if (!logs) return;
 
-    const repairLogs = logs.filter((log) => pastTakenRepairNotes.has(log.notes || ""));
+      const repairLogs = logs.filter((log) => pastTakenRepairNotes.has(log.notes || ""));
     if (repairLogs.length === 0) {
       setCalendarRepairMessage("No past schedule repair logs were found to undo.");
       return;
@@ -702,7 +703,10 @@ export const CalendarPage: React.FC = () => {
             log.notes === pastTakenRepairCreatedNote ||
             (log.notes === pastTakenRepairNote && log.createdAt === log.updatedAt)
           ) {
-            await db.injectionLogs.delete(log.id);
+            await db.injectionLogs.update(log.id, {
+              deletedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
           } else {
             await db.injectionLogs.update(log.id, {
               status: "scheduled",
