@@ -31,6 +31,15 @@ const websiteResources: Resource[] = [
   },
 ];
 
+const peptideSourcingResources: Resource[] = [
+  {
+    title: "Reta Unfiltered Skool",
+    description: "Trusted community resource for wholesale peptides with COAs.",
+    url: "https://www.skool.com/retaunfiltered/about?ref=fbe7e9d856ed44de89af48d503a9ce93",
+    type: "website",
+  },
+];
+
 const youtubeResources: Resource[] = [
   {
     title: "Dr Alex Tatem",
@@ -42,6 +51,12 @@ const youtubeResources: Resource[] = [
     title: "Dr Jones DC",
     description: "@DrJonesDC",
     url: "https://www.youtube.com/@DrJonesDC",
+    type: "youtube",
+  },
+  {
+    title: "Dr A Froese",
+    description: "@DrAFroese",
+    url: "https://www.youtube.com/@DrAFroese",
     type: "youtube",
   },
   {
@@ -59,6 +74,7 @@ const youtubeResources: Resource[] = [
 ];
 
 const resourceSections = [
+  { title: "Peptide Sourcing", Icon: LinkIcon, resources: peptideSourcingResources },
   { title: "Websites", Icon: Globe, resources: websiteResources },
   { title: "YouTube", Icon: Video, resources: youtubeResources },
 ];
@@ -69,7 +85,13 @@ const ResourceCard: React.FC<{ resource: Resource }> = ({ resource }) => {
   const Icon = resource.type === "youtube" ? Video : LinkIcon;
 
   return (
-    <Card
+    <a
+      href={resource.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Open ${resource.title}`}
+      title={`Open ${resource.title}`}
+      className="card-premium resource-card-link"
       style={{
         padding: "14px",
         display: "grid",
@@ -103,12 +125,8 @@ const ResourceCard: React.FC<{ resource: Resource }> = ({ resource }) => {
         </p>
       </div>
 
-      <a
-        href={resource.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={`Open ${resource.title}`}
-        title={`Open ${resource.title}`}
+      <span
+        aria-hidden="true"
         className="btn btn-secondary"
         style={{
           width: "38px",
@@ -122,8 +140,8 @@ const ResourceCard: React.FC<{ resource: Resource }> = ({ resource }) => {
         }}
       >
         <ExternalLink size={16} />
-      </a>
-    </Card>
+      </span>
+    </a>
   );
 };
 

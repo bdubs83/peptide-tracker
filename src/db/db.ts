@@ -5,6 +5,7 @@ import type { InjectionLog } from "../types/injectionLog";
 import type { WeightLog } from "../types/weightLog";
 import type { StockItem } from "../types/stock";
 import type { VaultUser } from "../types/vaultUser";
+import type { VialAdjustment } from "../types/vialAdjustment";
 import { DEFAULT_VAULT_USER_ID } from "../types/vaultUser";
 import type { AppSetting } from "./schema";
 import { convertLegacyScheduleToDoseSchedule, scheduleNeedsDoseSchedule } from "../utils/scheduleMigration";
@@ -16,6 +17,7 @@ export class PeptideVaultDatabase extends Dexie {
   weightLogs!: Table<WeightLog, string>;
   stockItems!: Table<StockItem, string>;
   vaultUsers!: Table<VaultUser, string>;
+  vialAdjustments!: Table<VialAdjustment, string>;
   appSettings!: Table<AppSetting, string>;
 
   constructor() {
@@ -165,6 +167,16 @@ export class PeptideVaultDatabase extends Dexie {
           });
         }
       });
+    this.version(6).stores({
+      peptides: "id, name, createdAt, vaultUserId, openVialId",
+      schedules: "id, peptideId, isActive, vaultUserId, openVialId",
+      injectionLogs: "id, peptideId, scheduledDate, status, vaultUserId, openVialId",
+      weightLogs: "id, date, createdAt",
+      appSettings: "key",
+      stockItems: "id, name, createdAt, receivedDate",
+      vaultUsers: "id, sortOrder",
+      vialAdjustments: "id, peptideId, adjustmentDate, reason, vaultUserId, openVialId",
+    });
   }
 }
 

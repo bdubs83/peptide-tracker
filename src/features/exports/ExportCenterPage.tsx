@@ -18,6 +18,7 @@ import { DEFAULT_VAULT_USER_ID, type VaultUser } from "../../types/vaultUser";
 import type { WeightLog } from "../../types/weightLog";
 import { PEPTIDE_CATALOG } from "../../utils/peptideCatalog";
 import { getBlendDefinitionForCatalogId, getBlendDefinitionForName } from "../../utils/blendDefinitions";
+import { exportFile, textToBlob } from "../../utils/fileExport";
 import {
   addDays,
   getLocalDateString,
@@ -202,18 +203,6 @@ const csvEscape = (value: unknown) => {
 
 const toCsv = (headers: string[], rows: unknown[][]) => {
   return [headers.map(csvEscape).join(","), ...rows.map((row) => row.map(csvEscape).join(","))].join("\n");
-};
-
-const downloadTextFile = (filename: string, contents: string, mimeType: string) => {
-  const blob = new Blob([contents], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 };
 
 function daysBetween(startDateStr: string, endDateStr: string) {
@@ -512,6 +501,7 @@ export const ExportCenterPage: React.FC = () => {
     "halfLifeSummary",
   ]);
   const [includeInactiveSchedules, setIncludeInactiveSchedules] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
 
   useEffect(() => {
     void ensureDefaultVaultUser();
@@ -1032,8 +1022,9 @@ export const ExportCenterPage: React.FC = () => {
     }
   };
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     if (!canExportReport) return;
+    setExportMessage("");
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" });
     drawCoverPage(doc);
     selectedReportSections.forEach((sectionKey) => {
@@ -1056,7 +1047,13 @@ export const ExportCenterPage: React.FC = () => {
       );
     }
     addPdfPageNumbers(doc);
-    doc.save(makeFileName("Compiled Report"));
+    const filename = makeFileName("Compiled Report");
+    try {
+      const message = await exportFile(filename, doc.output("blob"));
+      setExportMessage(`${filename}: ${message}`);
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : "Unable to export this PDF.");
+    }
   };
 
   const handleDownloadCsv = (
@@ -1065,7 +1062,13 @@ export const ExportCenterPage: React.FC = () => {
     rows: unknown[][]
   ) => {
     if (!isLoaded || !isDateRangeValid) return;
-    downloadTextFile(makeFileName(label, "csv"), toCsv(headers, rows), "text/csv");
+    const filename = makeFileName(label, "csv");
+    setExportMessage("");
+    exportFile(filename, textToBlob(toCsv(headers, rows), "text/csv;charset=utf-8"))
+      .then((message) => setExportMessage(`${filename}: ${message}`))
+      .catch((error) => {
+        setExportMessage(error instanceof Error ? error.message : "Unable to export this CSV.");
+      });
   };
 
   const handleDownloadInjectionHistoryCsv = () => {
@@ -1452,6 +1455,11 @@ export const ExportCenterPage: React.FC = () => {
               Clear Filters
             </Button>
           </div>
+          {exportMessage && (
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.84rem", lineHeight: 1.45 }}>
+              {exportMessage}
+            </p>
+          )}
 
           <div
             style={{

@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { showDeviceNotification } from "./ReminderCenter";
+import { showDeviceNotification } from "./deviceNotifications";
 
 const installMockNotification = () => {
   const notifications: Array<{ title: string; body?: string }> = [];
@@ -76,5 +76,26 @@ describe("showDeviceNotification", () => {
       tag: "inner-circle-injection-reminder",
     });
     expect(notificationCalls).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the Notification API when service worker notification fails", async () => {
+    const { notificationCalls, notifications } = installMockNotification();
+    const showNotification = vi.fn().mockRejectedValue(new Error("stale registration"));
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        getRegistration: vi.fn().mockResolvedValue({ showNotification }),
+      },
+    });
+
+    await showDeviceNotification("Injection reminder", "Dose due soon.");
+
+    expect(showNotification).toHaveBeenCalledOnce();
+    expect(notificationCalls).toHaveBeenCalledWith("Injection reminder", {
+      body: "Dose due soon.",
+      icon: "/icon-192.png",
+      tag: "inner-circle-injection-reminder",
+    });
+    expect(notifications).toEqual([{ title: "Injection reminder", body: "Dose due soon." }]);
   });
 });

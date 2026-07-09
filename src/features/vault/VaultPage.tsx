@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../db/db";
 import { activeRecords } from "../../db/activeRecords";
+import { putAppSetting } from "../../db/appSettings";
 import { createVaultUser, ensureDefaultVaultUser, renameVaultUser } from "../../db/vaultUsers";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
@@ -20,12 +21,14 @@ import {
   getScheduledDoseForDate,
   getCurrentVialLogs,
   getCurrentVialTotalMcg,
+  getCurrentVialAdjustedMcg,
 } from "../../utils/dateUtils";
 import { formatMl, formatUnits, formatDose } from "../../utils/formatting";
-import { calculateReconstitution, normalizeDoseToMcg } from "../calculator/calculatorUtils";
+import { normalizeDoseToMcg } from "../calculator/calculatorUtils";
 import { PRELOADED_PEPTIDES } from "../../utils/peptideList";
 import { makePreferredScheduleMap } from "../../utils/scheduleUtils";
 import { isAvailableStock, hasUsableVialCount, isReceivedStock } from "../../utils/stockUtils";
+import { refillOpenVialFromStock } from "./refillFromStock";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -44,9 +47,12 @@ import type { InjectionLog } from "../../types/injectionLog";
 import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
 import type { StockItem } from "../../types/stock";
+import type { VialAdjustment } from "../../types/vialAdjustment";
 import { DEFAULT_VAULT_USER_ID } from "../../types/vaultUser";
 
 const normalizePeptideName = (name: string) => name.trim().toLowerCase();
+const vaultStockOpenKey = "pref_vault_stock_open";
+const vaultOpenVialsOpenKey = "pref_vault_open_vials_open";
 
 type RefillRequest = {
   peptide: Peptide;
@@ -80,6 +86,30 @@ const hasLessThanTwoDosesRemaining = (remainingMcg: number, doseMcg: number) => 
   return doseMcg > 0 && remainingMcg < doseMcg * 2;
 };
 
+const buildVialStatusByPeptideId = (
+  peptides: Peptide[] = [],
+  logs: InjectionLog[] = [],
+  adjustments: VialAdjustment[] = []
+) => {
+  const map = new Map<string, VialStatus>();
+  for (const peptide of peptides) {
+    const takenMcg = getCurrentVialLogs(peptide, logs)
+      .filter((log) => log.status === "taken" || log.status === "manual")
+      .reduce((sum, log) => sum + normalizeDoseToMcg(log.doseValue, log.doseUnit), 0);
+    const adjustedMcg = getCurrentVialAdjustedMcg(peptide, adjustments);
+
+    const totalMcg = getCurrentVialTotalMcg(peptide);
+    const remainingMcg = Math.max(0, totalMcg - takenMcg - adjustedMcg);
+    const fullVialMcg = peptide.vialMg * 1000;
+    map.set(peptide.id, {
+      remainingMg: remainingMcg / 1000,
+      percent: fullVialMcg > 0 ? (remainingMcg / fullVialMcg) * 100 : 0,
+      remainingMcg,
+    });
+  }
+  return map;
+};
+
 export const VaultPage: React.FC = () => {
   const navigate = useNavigate();
   const layoutMode = useEffectiveLayoutMode();
@@ -88,6 +118,7 @@ export const VaultPage: React.FC = () => {
   const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
   const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()));
   const logs = useLiveQuery(async () => activeRecords(await db.injectionLogs.toArray()));
+  const vialAdjustments = useLiveQuery(async () => activeRecords(await db.vialAdjustments.toArray()));
   const stockItems = useLiveQuery(async () => activeRecords(await db.stockItems.orderBy("createdAt").reverse().toArray()));
   const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
   const settings = useLiveQuery(() => db.appSettings.toArray());
@@ -116,6 +147,33 @@ export const VaultPage: React.FC = () => {
   useEffect(() => {
     void ensureDefaultVaultUser();
   }, []);
+
+  useEffect(() => {
+    if (!settings) return;
+
+    const stockOpenSetting = settings.find((item) => item.key === vaultStockOpenKey);
+    const openVialsOpenSetting = settings.find((item) => item.key === vaultOpenVialsOpenKey);
+
+    if (typeof stockOpenSetting?.value === "boolean") {
+      setIsStockOpen(stockOpenSetting.value);
+    }
+
+    if (typeof openVialsOpenSetting?.value === "boolean") {
+      setIsOpenVialsOpen(openVialsOpenSetting.value);
+    }
+  }, [settings]);
+
+  const toggleStockOpen = () => {
+    const nextValue = !isStockOpen;
+    setIsStockOpen(nextValue);
+    void putAppSetting(vaultStockOpenKey, nextValue);
+  };
+
+  const toggleOpenVialsOpen = () => {
+    const nextValue = !isOpenVialsOpen;
+    setIsOpenVialsOpen(nextValue);
+    void putAppSetting(vaultOpenVialsOpenKey, nextValue);
+  };
 
   const resetStockForm = () => {
     setEditingStockItemId(null);
@@ -258,83 +316,19 @@ export const VaultPage: React.FC = () => {
     const stockItem = refillRequest.stockOptions.find((item) => item.id === selectedRefillStockId);
     if (!stockItem) return;
 
-    if (!isAvailableStock(stockItem, today)) {
-      alert("This stock item is not available to pull yet.");
-      return;
-    }
-
-    const mgPerVial = stockItem.mgPerVial ? Number(stockItem.mgPerVial) : NaN;
-    const vialCount = stockItem.numberOfVials ? Number(stockItem.numberOfVials) : NaN;
-    if (!Number.isFinite(mgPerVial) || mgPerVial <= 0 || !Number.isFinite(vialCount) || vialCount <= 0) {
-      alert("This stock item does not have an available vial to pull.");
-      return;
-    }
-
-    const nowIso = new Date().toISOString();
-    const newOpenVialId = crypto.randomUUID();
     const existingRemainingMg = vialStatusByPeptideId.get(refillRequest.peptide.id)?.remainingMg || 0;
-    const currentVialTotalMg = Math.max(0, existingRemainingMg) + mgPerVial;
-    const recalculated = calculateReconstitution({
-      peptideMg: mgPerVial,
-      bacWaterMl: refillRequest.peptide.bacWaterMl,
-      desiredDoseValue: refillRequest.peptide.desiredDoseValue,
-      desiredDoseUnit: refillRequest.peptide.desiredDoseUnit,
-      unitsPerMl: refillRequest.peptide.unitsPerMl,
-    });
-
-    const oldOpenVialId = refillRequest.peptide.openVialId || refillRequest.peptide.id;
-
-    await db.transaction("rw", [db.peptides, db.schedules, db.stockItems], async () => {
-      const sharedPeptides = activeRecords(await db.peptides.where("openVialId").equals(oldOpenVialId).toArray());
-      if (!sharedPeptides.some((peptide) => peptide.id === refillRequest.peptide.id)) {
-        sharedPeptides.push(refillRequest.peptide);
-      }
-      const sharedPeptideIds = new Set(sharedPeptides.map((peptide) => peptide.id));
-
-      for (const peptide of sharedPeptides) {
-        await db.peptides.update(peptide.id, {
-          vialMg: mgPerVial,
-          concentrationMgPerMl: recalculated.concentrationMgPerMl,
-          concentrationMcgPerMl: recalculated.concentrationMcgPerMl,
-          doseMl: recalculated.doseMl,
-          doseUnits: recalculated.doseUnits,
-          estimatedDosesPerVial: recalculated.estimatedDosesPerVial,
-          percentOfVialPerDose: recalculated.percentOfVialPerDose,
-          currentVialStartedAt: nowIso,
-          currentVialTotalMg,
-          openVialId: newOpenVialId,
-          efficacyVerifiedAt: undefined,
-          sourceStockItemId: stockItem.id,
-          updatedAt: nowIso,
-        });
-      }
-
-      const linkedSchedules = activeRecords(await db.schedules.where("openVialId").equals(oldOpenVialId).toArray());
-      for (const schedule of linkedSchedules) {
-        await db.schedules.update(schedule.id, {
-          openVialId: newOpenVialId,
-          updatedAt: nowIso,
-        });
-      }
-
-      const legacyScheduleRows = activeRecords(await db.schedules.toArray()).filter(
-        (schedule) => sharedPeptideIds.has(schedule.peptideId) && !schedule.openVialId
-      );
-      for (const schedule of legacyScheduleRows) {
-        await db.schedules.update(schedule.id, {
-          openVialId: newOpenVialId,
-          updatedAt: nowIso,
-        });
-      }
-
-      await db.stockItems.update(stockItem.id, {
-        numberOfVials: String(Math.max(0, Math.floor(vialCount) - 1)),
-        updatedAt: nowIso,
+    try {
+      await refillOpenVialFromStock({
+        peptide: refillRequest.peptide,
+        stockItem,
+        existingRemainingMg,
+        today,
       });
-    });
-
-    setSelectedPeptideId(refillRequest.peptide.id);
-    closeRefillModal();
+      setSelectedPeptideId(refillRequest.peptide.id);
+      closeRefillModal();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not pull this vial from stock.");
+    }
   };
 
   const handleMarkEfficacyVerified = async (peptide: Peptide) => {
@@ -437,35 +431,17 @@ export const VaultPage: React.FC = () => {
     return map;
   }, [logs]);
 
-  const vialStatusByPeptideId = useMemo(() => {
-    const map = new Map<string, VialStatus>();
-    for (const peptide of peptides || []) {
-      const currentVialLogs = currentVialLogsByPeptideId.get(peptide.id) || [];
-      const takenMcg = currentVialLogs
-        .filter((log) => log.status === "taken" || log.status === "manual")
-        .reduce((sum, log) => sum + normalizeDoseToMcg(log.doseValue, log.doseUnit), 0);
-
-      const totalMcg = getCurrentVialTotalMcg(peptide);
-      const remainingMcg = Math.max(0, totalMcg - takenMcg);
-      const fullVialMcg = peptide.vialMg * 1000;
-      map.set(peptide.id, {
-        remainingMg: remainingMcg / 1000,
-        percent: fullVialMcg > 0 ? (remainingMcg / fullVialMcg) * 100 : 0,
-        remainingMcg,
-      });
-    }
-    return map;
-  }, [currentVialLogsByPeptideId, peptides]);
+  const vialStatusByPeptideId = buildVialStatusByPeptideId(peptides, logs, vialAdjustments);
 
   const sharedProjectionByPeptideId = useMemo(() => {
     const map = new Map<string, { injectionCount: number; emptyDate: string | null }>();
-    if (!peptides || !schedules || !logs) return map;
+    if (!peptides || !schedules || !logs || !vialAdjustments) return map;
 
     for (const peptide of peptides) {
-      map.set(peptide.id, getSharedOpenVialProjection(peptide, peptides, schedules, logs, today));
+      map.set(peptide.id, getSharedOpenVialProjection(peptide, peptides, schedules, logs, today, vialAdjustments));
     }
     return map;
-  }, [logs, peptides, schedules, today]);
+  }, [logs, peptides, schedules, today, vialAdjustments]);
 
   const stockProjectionById = useMemo(() => {
     const map = new Map<string, StockProjection>();
@@ -514,6 +490,7 @@ export const VaultPage: React.FC = () => {
         id: `stock-${item.id}`,
         openVialId: `stock-${item.id}`,
         vialMg: mgPerVial * vialCount,
+        currentVialTotalMg: mgPerVial * vialCount,
       };
       const projectionSchedules = matchingSchedules.map((schedule) => ({
         ...schedule,
@@ -658,7 +635,7 @@ export const VaultPage: React.FC = () => {
             }}
           >
             <button
-              onClick={() => setIsStockOpen((value) => !value)}
+              onClick={toggleStockOpen}
               style={{
                 flex: 1,
                 background: "none",
@@ -912,7 +889,7 @@ export const VaultPage: React.FC = () => {
 
         <Card>
           <button
-            onClick={() => setIsOpenVialsOpen((value) => !value)}
+            onClick={toggleOpenVialsOpen}
             style={{
               width: "100%",
               background: "none",

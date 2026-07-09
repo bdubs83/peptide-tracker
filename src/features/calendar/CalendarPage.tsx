@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
@@ -410,6 +411,7 @@ export const CalendarPage: React.FC = () => {
   const navigate = useNavigate();
 
   const today = getLocalDateString();
+  const isNativeApp = Capacitor.isNativePlatform();
   const [selectedDate, setSelectedDate] = useState(today);
   const [viewMode, setViewMode] = useState<"month" | "week">("month");
   const [eventFilter, setEventFilter] = useState<CalendarEventFilter>("all");
@@ -511,6 +513,10 @@ export const CalendarPage: React.FC = () => {
     }
     if (googlePendingEvents.length === 0) {
       setGoogleSyncMessage("Everything in this range has already been added from this device.");
+      return;
+    }
+    if (isNativeApp) {
+      setGoogleSyncMessage("Google Calendar export needs native OAuth setup in the app build. Use the web app or CSV/PDF export for this test build.");
       return;
     }
 

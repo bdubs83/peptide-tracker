@@ -1,14 +1,15 @@
 import React, { useCallback, useEffect, useId, useRef, useState, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, type User } from "firebase/auth";
 import { db } from "../../db/db";
 import { activeRecords } from "../../db/activeRecords";
 import { Card } from "../../components/Card";
 import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
 import { Button } from "../../components/Button";
-import { firebaseAuth, googleAuthProvider } from "../../firebase/firebase";
+import { firebaseAuth } from "../../firebase/firebase";
+import { signInWithGoogle, signOutOfCloudAccount } from "../../firebase/nativeGoogleAuth";
 import {
   getCloudDataCounts,
   compareLocalAndCloudData,
@@ -53,13 +54,16 @@ import {
   Smartphone,
   HelpCircle,
   FileText,
+  MessageCircle,
 } from "lucide-react";
 import type { Peptide } from "../../types/peptide";
 import type { PeptideSchedule } from "../../types/schedule";
 import type { InjectionLog } from "../../types/injectionLog";
 import type { StockItem } from "../../types/stock";
 import type { VaultUser } from "../../types/vaultUser";
+import type { VialAdjustment } from "../../types/vialAdjustment";
 import type { AppSetting } from "../../db/schema";
+import { exportFile, textToBlob } from "../../utils/fileExport";
 import type { AppTheme, LayoutMode } from "../../db/schema";
 import {
   isDeviceReminderLead,
@@ -70,6 +74,13 @@ import {
   type InAppReminderWindow,
   type SecondaryDeviceReminderLead,
 } from "../reminders/reminderUtils";
+import {
+  getDeviceNotificationPermission,
+  getDeviceNotificationPlatformLabel,
+  requestDeviceNotificationPermission,
+  type DeviceNotificationPermission,
+} from "../reminders/deviceNotifications";
+import { welcomeNotesSeenVersionKey, welcomeNotesVersion, welcomeUpdateNotes } from "../../app/welcomeNotes";
 
 type DisplayMode = "units" | "mL";
 type DosingUnit = "mcg" | "mg";
@@ -88,6 +99,7 @@ type BackupData = {
   weightLogs: WeightLog[];
   stockItems?: StockItem[];
   vaultUsers?: VaultUser[];
+  vialAdjustments?: VialAdjustment[];
   appSettings: AppSetting[];
 };
 
@@ -108,6 +120,10 @@ const themeOptions: { value: AppTheme; label: string }[] = [
   { value: "urbanGraffiti", label: "#50 Urban Graffiti" },
 ];
 
+const skoolSuggestionsUrl = "https://www.skool.com/retaunfiltered/app";
+const feedbackEmailUrl =
+  "mailto:peptide.app.support@gmail.com?subject=Inner%20Circle%20Feedback";
+
 const cloudCollectionLabels: Record<string, string> = {
   peptides: "Vials",
   schedules: "Schedules",
@@ -115,6 +131,7 @@ const cloudCollectionLabels: Record<string, string> = {
   weightLogs: "Body Logs",
   stockItems: "Stock",
   vaultUsers: "Users",
+  vialAdjustments: "Vial Adjustments",
   appSettings: "Settings",
 };
 
@@ -129,18 +146,6 @@ const getTodayInputValue = () => {
 const getCurrentTimeInputValue = () => {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-};
-
-const downloadTextFile = (filename: string, contents: string, mimeType: string) => {
-  const blob = new Blob([contents], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 };
 
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
@@ -203,6 +208,21 @@ const isStockItemBackupRecord = (value: unknown) => {
   return hasString(value, "id") && hasString(value, "name") && hasString(value, "createdAt") && hasString(value, "updatedAt");
 };
 
+const isVialAdjustmentBackupRecord = (value: unknown) => {
+  if (!isRecordObject(value)) return false;
+  return (
+    hasString(value, "id") &&
+    hasString(value, "peptideId") &&
+    hasString(value, "peptideNameSnapshot") &&
+    hasString(value, "adjustmentDate") &&
+    hasNumber(value, "amountValue") &&
+    hasNumber(value, "amountMcg") &&
+    hasString(value, "reason") &&
+    hasString(value, "createdAt") &&
+    hasString(value, "updatedAt")
+  );
+};
+
 const isVaultUserBackupRecord = (value: unknown) => {
   if (!isRecordObject(value)) return false;
   return hasString(value, "id") && hasString(value, "displayName") && hasString(value, "color") && hasNumber(value, "sortOrder");
@@ -230,6 +250,8 @@ const isBackupData = (value: unknown): value is BackupData => {
     (candidate.stockItems === undefined || candidate.stockItems.every(isStockItemBackupRecord)) &&
     (candidate.vaultUsers === undefined || Array.isArray(candidate.vaultUsers)) &&
     (candidate.vaultUsers === undefined || candidate.vaultUsers.every(isVaultUserBackupRecord)) &&
+    (candidate.vialAdjustments === undefined || Array.isArray(candidate.vialAdjustments)) &&
+    (candidate.vialAdjustments === undefined || candidate.vialAdjustments.every(isVialAdjustmentBackupRecord)) &&
     Array.isArray(candidate.appSettings) &&
     candidate.appSettings.every(isAppSettingBackupRecord)
   );
@@ -588,6 +610,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [reminderMessage, setReminderMessage] = useState("");
+  const [backupMessage, setBackupMessage] = useState("");
   const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [localCounts, setLocalCounts] = useState<CloudDataCounts | null>(null);
   const [cloudCounts, setCloudCounts] = useState<CloudDataCounts | null>(null);
@@ -610,9 +633,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const [inAppReminderWindow, setInAppReminderWindow] = useState<InAppReminderWindow>("24hour");
   const [devicePrimaryLead, setDevicePrimaryLead] = useState<DeviceReminderLead>("30min");
   const [deviceSecondaryLead, setDeviceSecondaryLead] = useState<SecondaryDeviceReminderLead>("none");
-  const [notificationPermission, setNotificationPermission] = useState(
-    "Notification" in window ? Notification.permission : "unsupported"
-  );
+  const [notificationPermission, setNotificationPermission] = useState<DeviceNotificationPermission>("default");
 
   // --- Body tracker states ---
   const [goalWeight, setGoalWeight] = useState("");
@@ -751,6 +772,21 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   }, [settingsList]);
 
   useEffect(() => {
+    let isMounted = true;
+    getDeviceNotificationPermission()
+      .then((permission) => {
+        if (isMounted) setNotificationPermission(permission);
+      })
+      .catch(() => {
+        if (isMounted) setNotificationPermission("unsupported");
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     return onAuthStateChanged(firebaseAuth, async (user) => {
       setCloudUser(user);
       setAuthMessage("");
@@ -782,38 +818,45 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     await updateAppSettings({ theme: value });
   };
 
+  const handleShowWelcomeNotes = async () => {
+    await putAppSetting(welcomeNotesSeenVersionKey, "");
+  };
+
   const handleInAppReminderChange = async (enabled: boolean) => {
     setInAppRemindersEnabled(enabled);
     await updateSetting("reminders_inAppEnabled", enabled);
   };
 
   const handleDeviceNotificationChange = async (enabled: boolean) => {
-    if (enabled && !("Notification" in window)) {
-      setReminderMessage("This browser does not support device notifications.");
+    let permission = await getDeviceNotificationPermission();
+
+    if (enabled && permission === "unsupported") {
+      setReminderMessage("This device does not support notifications in this app.");
+      setDeviceNotificationsEnabled(false);
+      await updateSetting("reminders_deviceEnabled", false);
       return;
     }
 
-    if (enabled && Notification.permission === "default") {
-      const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
+    if (enabled && permission === "default") {
+      permission = await requestDeviceNotificationPermission();
       if (permission !== "granted") {
         setReminderMessage("Device notifications were not enabled because permission was not granted.");
         setDeviceNotificationsEnabled(false);
         await updateSetting("reminders_deviceEnabled", false);
         return;
       }
-    } else if ("Notification" in window) {
-      setNotificationPermission(Notification.permission);
     }
 
-    if (enabled && "Notification" in window && Notification.permission !== "granted") {
-      setReminderMessage("Device notifications are blocked in this browser. You can change that in browser settings.");
+    setNotificationPermission(permission);
+
+    if (enabled && permission !== "granted") {
+      setReminderMessage(`Device notifications are blocked for ${getDeviceNotificationPlatformLabel()}. You can change that in device settings.`);
       setDeviceNotificationsEnabled(false);
       await updateSetting("reminders_deviceEnabled", false);
       return;
     }
 
-    setReminderMessage(enabled ? "Device notifications are enabled for this browser." : "");
+    setReminderMessage(enabled ? `Device notifications are enabled for ${getDeviceNotificationPlatformLabel()}.` : "");
     setDeviceNotificationsEnabled(enabled);
     await updateSetting("reminders_deviceEnabled", enabled);
   };
@@ -882,7 +925,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
   const handleGoogleSignIn = () => {
     runAccountAction(
-      () => signInWithPopup(firebaseAuth, googleAuthProvider).then(() => undefined),
+      signInWithGoogle,
       "Signed in with Google."
     );
   };
@@ -893,7 +936,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     runAccountAction(async () => {
       await putAppSetting(autoSyncEnabledKey, false);
       setIsAutoSyncReviewOpen(false);
-      await signOut(firebaseAuth);
+      await signOutOfCloudAccount();
     }, "Signed out. This device is back to local-only mode.");
   };
 
@@ -1197,15 +1240,22 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
       weightLogs: await db.weightLogs.toArray(),
       stockItems: await db.stockItems.toArray(),
       vaultUsers: await db.vaultUsers.toArray(),
+      vialAdjustments: await db.vialAdjustments.toArray(),
       appSettings: await db.appSettings.toArray(),
     };
 
-    downloadTextFile(
-      `inner-circle-backup-${exportedAt.slice(0, 10)}.json`,
-      JSON.stringify(backup, null, 2),
-      "application/json"
-    );
-    await updateSetting("lastBackupAt", exportedAt);
+    const filename = `inner-circle-backup-${exportedAt.slice(0, 10)}.json`;
+    setBackupMessage("");
+    try {
+      const message = await exportFile(
+        filename,
+        textToBlob(JSON.stringify(backup, null, 2), "application/json;charset=utf-8")
+      );
+      await updateSetting("lastBackupAt", exportedAt);
+      setBackupMessage(`${filename}: ${message}`);
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "Unable to export this backup.");
+    }
   };
 
   const handleImportBackupFile = async (file: File) => {
@@ -1226,7 +1276,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
     await db.transaction(
       "rw",
-      [db.peptides, db.schedules, db.injectionLogs, db.weightLogs, db.stockItems, db.vaultUsers, db.appSettings],
+      [db.peptides, db.schedules, db.injectionLogs, db.weightLogs, db.stockItems, db.vaultUsers, db.vialAdjustments, db.appSettings],
       async () => {
         await db.peptides.clear();
         await db.schedules.clear();
@@ -1234,6 +1284,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
         await db.weightLogs.clear();
         await db.stockItems.clear();
         await db.vaultUsers.clear();
+        await db.vialAdjustments.clear();
         await db.appSettings.clear();
         await db.peptides.bulkPut(withSyncTimestamps(parsed.peptides, importedAt));
         await db.schedules.bulkPut(withSyncTimestamps(parsed.schedules, importedAt));
@@ -1241,6 +1292,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
         await db.weightLogs.bulkPut(withSyncTimestamps(parsed.weightLogs, importedAt));
         await db.stockItems.bulkPut(withSyncTimestamps(parsed.stockItems || [], importedAt));
         await db.vaultUsers.bulkPut(withSyncTimestamps(parsed.vaultUsers || [], importedAt));
+        await db.vialAdjustments.bulkPut(withSyncTimestamps(parsed.vialAdjustments || [], importedAt));
         await db.appSettings.bulkPut(withSyncTimestamps(parsed.appSettings, importedAt));
       }
     );
@@ -1704,6 +1756,52 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
             </Button>
           </Card>
 
+          <Card style={{ marginBottom: "20px" }}>
+            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <MessageCircle size={20} style={{ color: "var(--color-primary)" }} />
+              Feedback & Suggestions
+            </h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "12px", lineHeight: 1.5 }}>
+              Have an idea, bug report, or feature request? Share it with the community or send it privately.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px" }}>
+              <a
+                href={skoolSuggestionsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ textDecoration: "none" }}
+              >
+                Suggest in Skool
+              </a>
+              <a
+                href={feedbackEmailUrl}
+                className="btn btn-secondary"
+                style={{ textDecoration: "none" }}
+              >
+                Email Feedback
+              </a>
+            </div>
+          </Card>
+
+          <Card style={{ marginBottom: "20px" }}>
+            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <FileText size={20} style={{ color: "var(--color-primary)" }} />
+              Version Notes
+            </h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "10px", lineHeight: 1.5 }}>
+              Current release: {welcomeNotesVersion}
+            </p>
+            <ul className="welcome-banner-updates" style={{ marginBottom: "12px" }}>
+              {welcomeUpdateNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+            <Button variant="secondary" fullWidth onClick={handleShowWelcomeNotes}>
+              Show Welcome Message
+            </Button>
+          </Card>
+
           {/* Preferences Section */}
           <Card style={{ marginBottom: "20px" }}>
             <h2 style={{ fontSize: "1.2rem", marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1805,7 +1903,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
               Reminder Settings
               </h2>
               <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "14px", lineHeight: 1.5 }}>
-                In-app reminders show when the app is open. Device notifications require browser permission and use each vial's injection time for before-dose alerts.
+                In-app reminders show when the app is open. Device notifications use app permission on mobile and browser permission on web.
               </p>
 
               <div className="reminder-settings-stack">
@@ -1848,7 +1946,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 <div className="reminder-setting-header">
                   <div className="reminder-setting-title">
                     <strong>Device</strong>
-                    <span>Browser notification alerts before injection time.</span>
+                    <span>App or browser alerts before injection time.</span>
                   </div>
                   <button
                     type="button"
@@ -1942,6 +2040,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 Import Backup
               </Button>
             </div>
+            {backupMessage && (
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.45, marginTop: "10px" }}>
+                {backupMessage}
+              </p>
+            )}
           </Card>
 
         </>

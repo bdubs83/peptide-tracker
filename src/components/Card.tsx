@@ -12,7 +12,7 @@ export const Card: React.FC<CardProps> = ({ children, className = "", onClick, s
     <div
       className={`card-premium ${className}`}
       onClick={onClick}
-      style={{ cursor: onClick ? "pointer" : "default", ...style }}
+      style={{ cursor: onClick ? "pointer" : undefined, ...style }}
     >
       {children}
     </div>

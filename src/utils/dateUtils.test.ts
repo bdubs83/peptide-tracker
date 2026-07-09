@@ -9,11 +9,13 @@ import {
   getSharedOpenVialProjection,
   getCurrentVialTotalMcg,
   isCurrentVialLog,
+  isDateInActiveCycle,
 } from "./dateUtils";
 import { convertLegacyScheduleToDoseSchedule } from "./scheduleMigration";
 import type { PeptideSchedule } from "../types/schedule";
 import type { Peptide } from "../types/peptide";
 import type { InjectionLog } from "../types/injectionLog";
+import type { VialAdjustment } from "../types/vialAdjustment";
 
 describe("dateUtils", () => {
   describe("getNextInjectionDate - everyXDays", () => {
@@ -200,6 +202,55 @@ describe("dateUtils", () => {
       const dates = getUpcomingInjectionDates(schedule, "2026-05-31", "2026-06-22");
 
       expect(dates).toEqual(["2026-05-31", "2026-06-07", "2026-06-14", "2026-06-21"]);
+    });
+
+    it("skips off-cycle dates for repeating on/off schedules", () => {
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        intervalDays: 7,
+        startDate: "2026-06-01",
+        cycleEnabled: true,
+        cycleWeeksOn: 4,
+        cycleWeeksOff: 2,
+        isActive: true,
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-01T12:00:00Z",
+      };
+
+      const dates = getUpcomingInjectionDates(schedule, "2026-06-01", "2026-07-20");
+
+      expect(dates).toEqual([
+        "2026-06-01",
+        "2026-06-08",
+        "2026-06-15",
+        "2026-06-22",
+        "2026-07-13",
+        "2026-07-20",
+      ]);
+    });
+  });
+
+  describe("isDateInActiveCycle", () => {
+    it("treats the on window as active and the off window as inactive", () => {
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        intervalDays: 7,
+        doseScheduleStartDate: "2026-06-01",
+        cycleEnabled: true,
+        cycleWeeksOn: 8,
+        cycleWeeksOff: 4,
+        isActive: true,
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-01T12:00:00Z",
+      };
+
+      expect(isDateInActiveCycle(schedule, "2026-07-20")).toBe(true);
+      expect(isDateInActiveCycle(schedule, "2026-07-27")).toBe(false);
+      expect(isDateInActiveCycle(schedule, "2026-08-24")).toBe(true);
     });
   });
 
@@ -412,7 +463,7 @@ describe("dateUtils", () => {
       expect(dates).toEqual(["2026-06-01", "2026-06-03", "2026-06-05"]);
     });
 
-    it("allows a later dosing phase to start on an exact date after one titration dose", () => {
+    it("allows a later dosing phase start date to end the prior titration phase", () => {
       const schedule: PeptideSchedule = {
         id: "s1",
         peptideId: "p1",
@@ -424,7 +475,6 @@ describe("dateUtils", () => {
           {
             id: "phase-1",
             durationType: "injections",
-            durationValue: 1,
             intervalDays: 7,
             doseValue: 2,
             doseUnit: "mg",
@@ -453,6 +503,46 @@ describe("dateUtils", () => {
         "2026-06-12",
       ]);
       expect(occurrences.map((occurrence) => occurrence.phase.doseValue)).toEqual([2, 4, 4, 4]);
+    });
+
+    it("filters dose schedule occurrences through cycle off weeks", () => {
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        intervalDays: 7,
+        startDate: "2026-06-01",
+        doseScheduleStartDate: "2026-06-01",
+        cycleEnabled: true,
+        cycleWeeksOn: 4,
+        cycleWeeksOff: 2,
+        doseSchedule: [
+          {
+            id: "phase-1",
+            durationType: "injections",
+            intervalDays: 7,
+            doseValue: 1,
+            doseUnit: "mg",
+            isContinuous: true,
+          },
+        ],
+        isActive: true,
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-01T12:00:00Z",
+      };
+
+      const dates = getDoseScheduleOccurrences(schedule, "2026-06-01", "2026-07-20").map(
+        (occurrence) => occurrence.date
+      );
+
+      expect(dates).toEqual([
+        "2026-06-01",
+        "2026-06-08",
+        "2026-06-15",
+        "2026-06-22",
+        "2026-07-13",
+        "2026-07-20",
+      ]);
     });
   });
 
@@ -707,6 +797,58 @@ describe("dateUtils", () => {
       expect(getCurrentVialTotalMcg(peptide)).toBe(7000);
       expect(getEstimatedRemainingDoses(peptide, schedule, [], "2026-06-29")).toBe(1);
       expect(getEstimatedEmptyDate(peptide, schedule, [], "2026-06-29")).toBe("2026-07-06");
+    });
+
+    it("subtracts vial adjustments from remaining current-vial projections", () => {
+      const peptide: Peptide = {
+        id: "p1",
+        name: "Test Peptide",
+        vialMg: 10,
+        bacWaterMl: 2,
+        desiredDoseValue: 2,
+        desiredDoseUnit: "mg",
+        syringeSizeMl: 1,
+        unitsPerMl: 100,
+        concentrationMgPerMl: 5,
+        concentrationMcgPerMl: 5000,
+        doseMl: 0.4,
+        doseUnits: 40,
+        estimatedDosesPerVial: 5,
+        percentOfVialPerDose: 20,
+        openVialId: "vial-1",
+        currentVialStartedAt: "2026-06-29T12:00:00.000Z",
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-29T12:00:00Z",
+      };
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        openVialId: "vial-1",
+        scheduleType: "everyXDays",
+        intervalDays: 7,
+        startDate: "2026-06-29",
+        isActive: true,
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-29T12:00:00Z",
+      };
+      const adjustments: VialAdjustment[] = [
+        {
+          id: "adj-1",
+          peptideId: "p1",
+          openVialId: "vial-1",
+          peptideNameSnapshot: "Test Peptide",
+          adjustmentDate: "2026-06-29",
+          amountValue: 4,
+          amountUnit: "mg",
+          amountMcg: 4000,
+          reason: "familyFriend",
+          createdAt: "2026-06-29T13:00:00.000Z",
+          updatedAt: "2026-06-29T13:00:00.000Z",
+        },
+      ];
+
+      expect(getEstimatedRemainingDoses(peptide, schedule, [], "2026-06-29", adjustments)).toBe(3);
+      expect(getEstimatedEmptyDate(peptide, schedule, [], "2026-06-29", adjustments)).toBe("2026-07-13");
     });
   });
 

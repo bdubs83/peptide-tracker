@@ -57,6 +57,7 @@ type DoseEvent = {
 };
 
 type ToolMode = "single" | "stack";
+type ChartStyle = "line" | "wave";
 
 const colors = [
   "#2476a8",
@@ -331,12 +332,14 @@ function HalfLifeChart({
   startDay,
   endDay,
   combined,
+  chartStyle,
 }: {
   chartData: ChartRow[];
   entries: Entry[];
   startDay: number;
   endDay: number;
   combined: boolean;
+  chartStyle: ChartStyle;
 }) {
   const [hoveredRow, setHoveredRow] = useState<ChartRow | null>(null);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
@@ -357,10 +360,16 @@ function HalfLifeChart({
   const yMax = maxValue * 1.12;
   const xScale = (day: number) => padding.left + ((day - startDay) / timelineDays) * plotWidth;
   const yScale = (value: number) => padding.top + plotHeight - (value / yMax) * plotHeight;
-  const buildPath = (valueForRow: (row: ChartRow) => number) =>
-    chartData
-      .map((row) => ({ x: xScale(row.day), y: yScale(valueForRow(row)) }))
-      .map((point, index, points) => {
+  const buildPath = (valueForRow: (row: ChartRow) => number) => {
+    const points = chartData.map((row) => ({ x: xScale(row.day), y: yScale(Math.max(0, valueForRow(row))) }));
+    if (chartStyle === "line") {
+      return points
+        .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+        .join(" ");
+    }
+
+    return points
+      .map((point, index) => {
         if (index === 0) return `M ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
         const previous = points[index - 1];
         const next = points[index + 1] ?? point;
@@ -370,6 +379,7 @@ function HalfLifeChart({
         return `C ${controlX.toFixed(2)} ${previousControlY.toFixed(2)}, ${controlX.toFixed(2)} ${nextControlY.toFixed(2)}, ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
       })
       .join(" ");
+  };
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ratio * yMax);
   const xTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => startDay + ratio * timelineDays);
   const hoveredX = hoveredRow ? xScale(hoveredRow.day) : null;
@@ -760,6 +770,7 @@ export const MultiHalfLifeTool: React.FC = () => {
   const [stackMessage, setStackMessage] = useState("");
   const [days, setDays] = useState(30);
   const [combined, setCombined] = useState(false);
+  const [chartStyle, setChartStyle] = useState<ChartStyle>("line");
   const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
   const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
   const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()));
@@ -1008,7 +1019,55 @@ export const MultiHalfLifeTool: React.FC = () => {
       </Card>
 
       <Card>
-        <HalfLifeChart chartData={chartData} entries={entries} startDay={timelineStartDay} endDay={timelineEndDay} combined={combined} />
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "10px",
+            marginBottom: "10px",
+            flexWrap: "wrap",
+          }}
+        >
+          <h3 style={{ fontSize: "0.95rem", margin: 0 }}>Chart</h3>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(82px, 1fr))",
+              gap: "6px",
+            }}
+          >
+            {([
+              { value: "line", label: "Straight line" },
+              { value: "wave", label: "Wave" },
+            ] as const).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setChartStyle(option.value)}
+                className="btn"
+                style={{
+                  minHeight: "34px",
+                  padding: "6px 9px",
+                  borderColor: chartStyle === option.value ? "var(--border-color-focus)" : "var(--border-color)",
+                  background: chartStyle === option.value ? "var(--bg-active-soft)" : "var(--bg-input)",
+                  color: chartStyle === option.value ? "var(--text-primary)" : "var(--text-secondary)",
+                  fontSize: "0.74rem",
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <HalfLifeChart
+          chartData={chartData}
+          entries={entries}
+          startDay={timelineStartDay}
+          endDay={timelineEndDay}
+          combined={combined}
+          chartStyle={chartStyle}
+        />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "8px", marginTop: "12px" }}>
           {entries.map((entry, index) => (
             <div

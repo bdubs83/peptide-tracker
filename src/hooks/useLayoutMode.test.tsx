@@ -3,7 +3,7 @@
  */
 import { renderHook, act } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { useLayoutMode } from "./useLayoutMode";
+import { getLayoutModeForWidth, useLayoutMode } from "./useLayoutMode";
 import type { LayoutMode } from "../db/schema";
 
 const setViewportWidth = (width: number) => {
@@ -30,6 +30,14 @@ describe("useLayoutMode", () => {
     setViewportWidth(1024);
     const { result } = renderLayoutHook("auto");
     expect(result.current).toBe("desktop");
+  });
+
+  it("returns mobile for auto in the native app even when the viewport is wide", () => {
+    expect(getLayoutModeForWidth("auto", 1400, true)).toBe("mobile");
+  });
+
+  it("allows the desktop override in the native app", () => {
+    expect(getLayoutModeForWidth("desktop", 420, true)).toBe("desktop");
   });
 
   it("always returns mobile for the mobile override", () => {

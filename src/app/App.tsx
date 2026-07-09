@@ -21,6 +21,8 @@ import { AppRoutes } from "./routes";
 import { DesktopAppShell, MobileAppShell } from "./AppShells";
 import { LayoutModeProvider } from "./LayoutModeContext";
 import { ReminderCenter } from "../features/reminders/ReminderCenter";
+import { WelcomeBanner } from "./WelcomeBanner";
+import { welcomeNotesSeenVersionKey } from "./welcomeNotes";
 
 const themeColors = {
   light: "#f6f8fb",
@@ -46,6 +48,7 @@ const syncableSettingKeysToIgnore = new Set([
   lastAutoSyncResultKey,
   lastAutoSyncStatusKey,
   lastKnownCloudReplaceAtKey,
+  welcomeNotesSeenVersionKey,
   "lastCloudBackupAt",
   "lastCloudRestoreAt",
   "lastCloudMergeAt",
@@ -182,6 +185,7 @@ export const App: React.FC = () => {
       <LayoutModeProvider value={layoutMode}>
         {isLoaded && <ReminderCenter />}
         <AppRoutes />
+        {isLoaded && <WelcomeBanner settings={appSettings} />}
       </LayoutModeProvider>
     </Shell>
   );

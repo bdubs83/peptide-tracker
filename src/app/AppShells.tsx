@@ -18,14 +18,12 @@ const BrandHeader: React.FC<
   <header className={compact ? "desktop-brand" : "header-bar"} style={compact ? undefined : { padding: "10px 16px" }}>
     <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
       <img
-        src="/icon-192.png"
+        src="/icon-mark-192.png"
         alt="Inner Circle Logo"
         style={{
           width: compact ? "42px" : "44px",
           height: compact ? "42px" : "44px",
-          borderRadius: "10px",
-          objectFit: "cover",
-          border: "1px solid var(--border-color)",
+          objectFit: "contain",
           flexShrink: 0,
         }}
       />

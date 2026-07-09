@@ -1,6 +1,7 @@
 import type { Peptide } from "../types/peptide";
 import type { DoseSchedulePhase, PeptideSchedule } from "../types/schedule";
 import type { InjectionLog } from "../types/injectionLog";
+import type { VialAdjustment } from "../types/vialAdjustment";
 import { normalizeDoseToMcg } from "../features/calculator/calculatorUtils";
 
 interface DoseScheduleOccurrence {
@@ -31,8 +32,33 @@ export function addDays(dateStr: string, days: number): string {
   return getLocalDateString(date);
 }
 
+const getScheduleCycleStartDate = (schedule: PeptideSchedule): string | undefined =>
+  schedule.doseScheduleStartDate || schedule.startDate || schedule.lastInjectionDate;
+
+export function isDateInActiveCycle(schedule: PeptideSchedule, dateStr: string): boolean {
+  if (!schedule.cycleEnabled) return true;
+
+  const weeksOn = Math.max(0, schedule.cycleWeeksOn || 0);
+  const weeksOff = Math.max(0, schedule.cycleWeeksOff || 0);
+  if (weeksOn <= 0 || weeksOff <= 0) return true;
+
+  const cycleStartDate = getScheduleCycleStartDate(schedule);
+  if (!cycleStartDate || dateStr < cycleStartDate) return false;
+
+  const daysSinceCycleStart = Math.floor(
+    (parseLocalDate(dateStr).getTime() - parseLocalDate(cycleStartDate).getTime()) /
+      (1000 * 60 * 60 * 24)
+  );
+  const cycleDays = (weeksOn + weeksOff) * 7;
+  if (cycleDays <= 0) return true;
+
+  const dayInCycle = daysSinceCycleStart % cycleDays;
+  return dayInCycle < weeksOn * 7;
+}
+
 export function isScheduledDate(schedule: PeptideSchedule, dateStr: string): boolean {
   if (!schedule.isActive) return false;
+  if (!isDateInActiveCycle(schedule, dateStr)) return false;
 
   // If a start date is specified, the date must be >= startDate
   if (schedule.startDate && dateStr < schedule.startDate) {
@@ -115,6 +141,11 @@ export function getNextInjectionDate(
       const candidateStr = getLocalDateString(candidateDate);
 
       if (candidateStr >= fromDateStr) {
+        if (!isDateInActiveCycle(schedule, candidateStr)) {
+          k++;
+          attempts++;
+          continue;
+        }
         if (candidateStr === fromDateStr && loggedDates.has(candidateStr)) {
           k++;
           attempts++;
@@ -138,6 +169,11 @@ export function getNextInjectionDate(
       const dayOfWeek = checkDate.getDay();
 
       if (days.includes(dayOfWeek)) {
+        if (!isDateInActiveCycle(schedule, checkStr)) {
+          checkDate.setDate(checkDate.getDate() + 1);
+          continue;
+        }
+
         if (checkStr === fromDateStr && loggedDates.has(checkStr)) {
           checkDate.setDate(checkDate.getDate() + 1);
           continue;
@@ -258,7 +294,7 @@ export function getDoseScheduleOccurrences(
         ? daysSincePhaseStart >= 0 && daysSincePhaseStart % 7 === 0
         : isScheduledDate(phaseSchedule, currentDate);
 
-    if (isDoseDate) {
+    if (isDoseDate && isDateInActiveCycle(schedule, currentDate)) {
       occurrences.push({ date: currentDate, phase });
 
       if (!phase.isContinuous && phase.durationType === "injections") {
@@ -294,6 +330,8 @@ export function getWeekBasedDoseScheduleStockProjection(
   totalMcg: number,
   fromDateStr = getLocalDateString()
 ) {
+  if (schedule.cycleEnabled) return null;
+
   const phases = (schedule.doseSchedule || []).filter((phase) => phase.doseValue > 0);
   if (phases.length === 0) return null;
   if (phases.some((phase) => phase.durationType === "injections")) return null;
@@ -439,6 +477,27 @@ export function getCurrentVialLogs(peptide: Peptide, injectionLogs: InjectionLog
   });
 }
 
+export function isCurrentVialAdjustment(peptide: Peptide, adjustment: VialAdjustment): boolean {
+  if (!peptide.currentVialStartedAt) return true;
+  const adjustmentTime = adjustment.createdAt || adjustment.updatedAt;
+  return Boolean(adjustmentTime && adjustmentTime >= peptide.currentVialStartedAt);
+}
+
+export function getCurrentVialAdjustments(peptide: Peptide, adjustments: VialAdjustment[] = []): VialAdjustment[] {
+  const openVialId = peptide.openVialId || peptide.id;
+  return adjustments.filter((adjustment) => {
+    const matchesVial = adjustment.openVialId ? adjustment.openVialId === openVialId : adjustment.peptideId === peptide.id;
+    return matchesVial && isCurrentVialAdjustment(peptide, adjustment);
+  });
+}
+
+export function getCurrentVialAdjustedMcg(peptide: Peptide, adjustments: VialAdjustment[] = []): number {
+  return getCurrentVialAdjustments(peptide, adjustments).reduce(
+    (sum, adjustment) => sum + Math.max(0, adjustment.amountMcg || 0),
+    0
+  );
+}
+
 export function getCurrentVialTotalMcg(peptide: Peptide): number {
   const totalMg =
     typeof peptide.currentVialTotalMg === "number" && Number.isFinite(peptide.currentVialTotalMg)
@@ -451,7 +510,8 @@ export function getEstimatedRemainingDoses(
   peptide: Peptide,
   schedule: PeptideSchedule,
   injectionLogs: InjectionLog[],
-  fromDateStr = getLocalDateString()
+  fromDateStr = getLocalDateString(),
+  vialAdjustments: VialAdjustment[] = []
 ): number {
   const currentVialLogs = getCurrentVialLogs(peptide, injectionLogs);
   const relevantLogs = currentVialLogs.filter(
@@ -461,7 +521,8 @@ export function getEstimatedRemainingDoses(
     return sum + normalizeDoseToMcg(log.doseValue, log.doseUnit);
   }, 0);
 
-  let remainingMcg = Math.max(0, getCurrentVialTotalMcg(peptide) - totalTakenMcg);
+  const adjustedMcg = getCurrentVialAdjustedMcg(peptide, vialAdjustments);
+  let remainingMcg = Math.max(0, getCurrentVialTotalMcg(peptide) - totalTakenMcg - adjustedMcg);
   if (remainingMcg <= 0) return 0;
 
   const loggedScheduledDates = new Set(
@@ -512,7 +573,8 @@ export function getEstimatedEmptyDate(
   peptide: Peptide,
   schedule: PeptideSchedule,
   injectionLogs: InjectionLog[],
-  fromDateStr = getLocalDateString()
+  fromDateStr = getLocalDateString(),
+  vialAdjustments: VialAdjustment[] = []
 ): string | null {
   if (!schedule.isActive) return null;
 
@@ -530,7 +592,8 @@ export function getEstimatedEmptyDate(
   }, 0);
 
   const totalVialMcg = getCurrentVialTotalMcg(peptide);
-  let remainingMcg = Math.max(0, totalVialMcg - totalTakenMcg);
+  const adjustedMcg = getCurrentVialAdjustedMcg(peptide, vialAdjustments);
+  let remainingMcg = Math.max(0, totalVialMcg - totalTakenMcg - adjustedMcg);
 
   if (remainingMcg <= 0) {
     return fromDateStr; // empty now or before next injection
@@ -591,7 +654,8 @@ export function getSharedOpenVialProjection(
   peptides: Peptide[],
   schedules: PeptideSchedule[],
   injectionLogs: InjectionLog[],
-  fromDateStr = getLocalDateString()
+  fromDateStr = getLocalDateString(),
+  vialAdjustments: VialAdjustment[] = []
 ): { injectionCount: number; emptyDate: string | null } {
   const openVialId = openVialPeptide.openVialId || openVialPeptide.id;
   const currentVialLogs = getCurrentVialLogs(openVialPeptide, injectionLogs);
@@ -599,7 +663,8 @@ export function getSharedOpenVialProjection(
     .filter((log) => log.status === "taken" || log.status === "manual")
     .reduce((sum, log) => sum + normalizeDoseToMcg(log.doseValue, log.doseUnit), 0);
 
-  let remainingMcg = Math.max(0, getCurrentVialTotalMcg(openVialPeptide) - totalTakenMcg);
+  const adjustedMcg = getCurrentVialAdjustedMcg(openVialPeptide, vialAdjustments);
+  let remainingMcg = Math.max(0, getCurrentVialTotalMcg(openVialPeptide) - totalTakenMcg - adjustedMcg);
   if (remainingMcg <= 0) return { injectionCount: 0, emptyDate: fromDateStr };
 
   const peptidesById = new Map(peptides.map((peptide) => [peptide.id, peptide]));

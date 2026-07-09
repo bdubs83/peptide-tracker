@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "653359340510",
+    "project_id": "unfiltered-inner-circle",
+    "storage_bucket": "unfiltered-inner-circle.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:653359340510:android:8cc04ea0a8624db622db4f",
+        "android_client_info": {
+          "package_name": "com.retaunfiltered.innercircle"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "653359340510-92aqgink79fvppmn30f0vlj8s52udjui.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.retaunfiltered.innercircle",
+            "certificate_hash": "fd1766de79ff63dab349cd0f8064fdf9f4333bea"
+          }
+        },
+        {
+          "client_id": "653359340510-usrnlh4f8icg4ffup3mnjjcmq7kpqffl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.retaunfiltered.innercircle",
+            "certificate_hash": "e95dbd8cd0384750949ec207f1ecd8f814422fca"
+          }
+        },
+        {
+          "client_id": "653359340510-7dtpqe4hlrb99v1oelcl6m34e6h22gae.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA8sT0GTaNM5PlX2v1pXmyV9UVfRKcAINQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "653359340510-7dtpqe4hlrb99v1oelcl6m34e6h22gae.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -4,6 +4,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { Bell, CalendarClock, ChevronDown, ChevronUp } from "lucide-react";
 import { db } from "../../db/db";
 import { activeRecords } from "../../db/activeRecords";
+import { putAppSetting } from "../../db/appSettings";
 import { ensureDefaultVaultUser } from "../../db/vaultUsers";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
@@ -16,6 +17,7 @@ import {
   type DeviceReminderLead,
   type SecondaryDeviceReminderLead,
 } from "./reminderUtils";
+import { getDeviceNotificationPermission, showDeviceNotification, type DeviceNotificationPermission } from "./deviceNotifications";
 import type { DayEvent } from "../calendar/calendarUtils";
 import { DEFAULT_VAULT_USER_ID } from "../../types/vaultUser";
 import type { Peptide } from "../../types/peptide";
@@ -29,38 +31,7 @@ type ReminderRow = {
 
 const notificationStorageKey = (date: string, lead: string, reminderKey: string) =>
   `inner-circle-device-reminder-${date}-${lead}-${reminderKey}`;
-
-const getNotificationPermission = () => {
-  if (!("Notification" in window)) return "unsupported";
-  return Notification.permission;
-};
-
-export const showDeviceNotification = async (title: string, body: string) => {
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
-
-  if ("serviceWorker" in navigator) {
-    try {
-      const registration = await navigator.serviceWorker.getRegistration();
-      if (registration) {
-        await registration.showNotification(title, {
-          body,
-          icon: "/icon-192.png",
-          badge: "/icon-192.png",
-          tag: "inner-circle-injection-reminder",
-        });
-        return;
-      }
-    } catch {
-      // Fall back to the basic Notification API below.
-    }
-  }
-
-  new Notification(title, {
-    body,
-    icon: "/icon-192.png",
-    tag: "inner-circle-injection-reminder",
-  });
-};
+const reminderCenterCollapsedKey = "pref_reminder_center_collapsed";
 
 const buildScheduledDateTime = (date: string, time = "09:00") => {
   const [year, month, day] = date.split("-").map(Number);
@@ -142,6 +113,7 @@ export const ReminderCenter: React.FC = () => {
   const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
   const [isCollapsed, setIsCollapsed] = React.useState(false);
   const [now, setNow] = React.useState(new Date());
+  const [notificationPermission, setNotificationPermission] = React.useState<DeviceNotificationPermission>("default");
 
   useEffect(() => {
     void ensureDefaultVaultUser();
@@ -151,6 +123,21 @@ export const ReminderCenter: React.FC = () => {
     const interval = window.setInterval(() => setNow(new Date()), 60 * 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const collapsedSetting = settings?.find((item) => item.key === reminderCenterCollapsedKey);
+    if (typeof collapsedSetting?.value === "boolean") {
+      setIsCollapsed(collapsedSetting.value);
+    }
+  }, [settings]);
+
+  const toggleCollapsed = () => {
+    setIsCollapsed((collapsed) => {
+      const nextValue = !collapsed;
+      void putAppSetting(reminderCenterCollapsedKey, nextValue);
+      return nextValue;
+    });
+  };
 
   const preferences = resolveReminderPreferences(settings);
   const today = getLocalDateString();
@@ -167,7 +154,6 @@ export const ReminderCenter: React.FC = () => {
   const dueCount = reminderRows.filter(({ event }) => event.status === "due").length;
   const missedCount = reminderRows.filter(({ event }) => event.status === "missed").length;
   const upcomingCount = reminderRows.filter(({ event }) => event.status === "upcoming").length;
-  const notificationPermission = getNotificationPermission();
   const userById = useMemo(() => new Map((vaultUsers || []).map((user) => [user.id, user])), [vaultUsers]);
   const getUserName = useCallback(
     (event: DayEvent) => userById.get(getEventUserId(event))?.displayName || "User 1",
@@ -177,6 +163,21 @@ export const ReminderCenter: React.FC = () => {
     if (!peptides || !schedules || !logs) return [];
     return getReminderRowsForRange(today, addDays(today, 1), peptides, schedules, logs);
   }, [logs, peptides, schedules, today]);
+
+  useEffect(() => {
+    let isMounted = true;
+    getDeviceNotificationPermission()
+      .then((permission) => {
+        if (isMounted) setNotificationPermission(permission);
+      })
+      .catch(() => {
+        if (isMounted) setNotificationPermission("unsupported");
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [preferences.deviceEnabled]);
 
   useEffect(() => {
     if (
@@ -259,7 +260,7 @@ export const ReminderCenter: React.FC = () => {
               title={isCollapsed ? "Expand reminders" : "Collapse reminders"}
               aria-label={isCollapsed ? "Expand reminders" : "Collapse reminders"}
               aria-expanded={!isCollapsed}
-              onClick={() => setIsCollapsed((collapsed) => !collapsed)}
+              onClick={toggleCollapsed}
               style={{
                 width: "32px",
                 height: "32px",

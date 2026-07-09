@@ -57,6 +57,8 @@ type PendingPastInjectionSave = {
   nowIso: string;
 };
 
+const MAX_DOSE_SCHEDULE_PHASES = 15;
+
 const isDoseUnit = (value: unknown): value is DoseUnit => value === "mcg" || value === "mg";
 const isAnchorType = (value: string): value is AnchorType =>
   value === "startDate" || value === "lastInjectionDate";
@@ -162,6 +164,9 @@ export const AddPeptidePage: React.FC = () => {
   const [injectionTime, setInjectionTime] = useState("09:00");
   const [anchorType, setAnchorType] = useState<AnchorType>("startDate");
   const [anchorDate, setAnchorDate] = useState(getLocalDateString());
+  const [cycleEnabled, setCycleEnabled] = useState(false);
+  const [cycleWeeksOn, setCycleWeeksOn] = useState("8");
+  const [cycleWeeksOff, setCycleWeeksOff] = useState("4");
   const [pendingPastInjectionSave, setPendingPastInjectionSave] =
     useState<PendingPastInjectionSave | null>(null);
   const addPeptideLocationState = location.state as AddPeptideLocationState | null;
@@ -287,6 +292,9 @@ export const AddPeptidePage: React.FC = () => {
 
         if (s) {
           setInjectionTime(s.injectionTime || "09:00");
+          setCycleEnabled(Boolean(s.cycleEnabled));
+          setCycleWeeksOn(String(s.cycleWeeksOn || 8));
+          setCycleWeeksOff(String(s.cycleWeeksOff || 4));
 
           if (s.doseScheduleStartDate) {
             setAnchorType("startDate");
@@ -327,7 +335,11 @@ export const AddPeptidePage: React.FC = () => {
   };
 
   const handleAddDoseScheduleRow = () => {
-    setDoseScheduleRows((rows) => [...rows, makeDoseScheduleRow(desiredDoseUnit, desiredDoseValue)]);
+    setDoseScheduleRows((rows) =>
+      rows.length >= MAX_DOSE_SCHEDULE_PHASES
+        ? rows
+        : [...rows, makeDoseScheduleRow(desiredDoseUnit, desiredDoseValue)]
+    );
   };
 
   const handleRemoveDoseScheduleRow = (rowId: string) => {
@@ -496,6 +508,18 @@ export const AddPeptidePage: React.FC = () => {
       alert("Please enter a valid start or last injection date.");
       return;
     }
+    const parsedCycleWeeksOn = parseInt(cycleWeeksOn, 10);
+    const parsedCycleWeeksOff = parseInt(cycleWeeksOff, 10);
+    if (
+      cycleEnabled &&
+      (isNaN(parsedCycleWeeksOn) ||
+        parsedCycleWeeksOn <= 0 ||
+        isNaN(parsedCycleWeeksOff) ||
+        parsedCycleWeeksOff <= 0)
+    ) {
+      alert("Cycle settings need valid on and off week counts.");
+      return;
+    }
     if (!isEditMode && sourceType === "openVial" && !sourceOpenVialId) {
       alert("Please choose the open vial this peptide should use.");
       return;
@@ -504,6 +528,8 @@ export const AddPeptidePage: React.FC = () => {
     const phases: DoseSchedulePhase[] = [];
     for (const [index, row] of doseScheduleRows.entries()) {
       const isLast = index === doseScheduleRows.length - 1;
+      const hasNextPhaseStartDate = Boolean(doseScheduleRows[index + 1]?.startDate);
+      const requiresDuration = !isLast && !hasNextPhaseStartDate;
       const phaseDose = parseFloat(row.doseValue);
       const phaseInterval = parseInt(row.intervalDays, 10);
       const phaseDuration = parseInt(row.durationValue, 10);
@@ -520,8 +546,8 @@ export const AddPeptidePage: React.FC = () => {
         alert("Each Days of Week schedule line needs at least one selected day.");
         return;
       }
-      if (!isLast && (isNaN(phaseDuration) || phaseDuration <= 0)) {
-        alert("Each dosing schedule line before the last needs a valid duration.");
+      if (requiresDuration && (isNaN(phaseDuration) || phaseDuration <= 0)) {
+        alert("Each dosing schedule line before the last needs a valid duration unless the next phase has a start date.");
         return;
       }
       if (index > 0 && row.startDate && row.startDate < anchorDate) {
@@ -533,7 +559,7 @@ export const AddPeptidePage: React.FC = () => {
         id: row.id,
         startDate: index > 0 && row.startDate ? row.startDate : undefined,
         durationType: row.durationType,
-        durationValue: isLast ? undefined : phaseDuration,
+        durationValue: requiresDuration ? phaseDuration : undefined,
         intervalDays: row.durationType === "injections" ? phaseInterval : undefined,
         daysOfWeek: row.durationType === "daysOfWeek" ? row.daysOfWeek : undefined,
         doseValue: phaseDose,
@@ -609,9 +635,9 @@ export const AddPeptidePage: React.FC = () => {
       injectionTime,
       startDate: anchorType === "startDate" ? anchorDate : undefined,
       lastInjectionDate: anchorType === "lastInjectionDate" ? anchorDate : undefined,
-      cycleEnabled: false,
-      cycleWeeksOn: undefined,
-      cycleWeeksOff: undefined,
+      cycleEnabled,
+      cycleWeeksOn: cycleEnabled ? parsedCycleWeeksOn : undefined,
+      cycleWeeksOff: cycleEnabled ? parsedCycleWeeksOff : undefined,
       doseScheduleStartDate: existingData?.schedule?.doseScheduleStartDate,
       doseSchedule: phases,
       isActive: true,
@@ -864,6 +890,7 @@ export const AddPeptidePage: React.FC = () => {
               onClick={handleAddDoseScheduleRow}
               aria-label="Add dosing phase"
               title="Add dosing phase"
+              disabled={doseScheduleRows.length >= MAX_DOSE_SCHEDULE_PHASES}
               style={{
                 flexShrink: 0,
                 width: "38px",
@@ -872,10 +899,11 @@ export const AddPeptidePage: React.FC = () => {
                 border: "1px solid var(--color-primary)",
                 background: "var(--bg-active-soft)",
                 color: "var(--color-primary)",
+                opacity: doseScheduleRows.length >= MAX_DOSE_SCHEDULE_PHASES ? 0.45 : 1,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                cursor: "pointer",
+                cursor: doseScheduleRows.length >= MAX_DOSE_SCHEDULE_PHASES ? "not-allowed" : "pointer",
               }}
             >
               <Plus size={18} />
@@ -885,6 +913,7 @@ export const AddPeptidePage: React.FC = () => {
           <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
             {doseScheduleRows.map((row, index) => {
               const isLast = index === doseScheduleRows.length - 1;
+              const isEndedByNextPhaseStart = !isLast && Boolean(doseScheduleRows[index + 1]?.startDate);
               const showDaysOfWeek = row.durationType === "daysOfWeek";
               const canRemovePhase = doseScheduleRows.length > 1;
               return (
@@ -976,7 +1005,8 @@ export const AddPeptidePage: React.FC = () => {
                           value={row.durationValue}
                           onChange={(e) => updateDoseScheduleRow(row.id, { durationValue: e.target.value })}
                           min="1"
-                          placeholder="e.g. 4"
+                          placeholder={isEndedByNextPhaseStart ? "Ends at next phase" : "e.g. 4"}
+                          disabled={isEndedByNextPhaseStart}
                         />
                       )}
                       <div className="form-group" style={{ gridColumn: "1 / -1" }}>
@@ -1040,8 +1070,9 @@ export const AddPeptidePage: React.FC = () => {
                           value={row.durationValue}
                           onChange={(e) => updateDoseScheduleRow(row.id, { durationValue: e.target.value })}
                           min="1"
-                          placeholder="e.g. 8"
+                          placeholder={isEndedByNextPhaseStart ? "Ends at next phase" : "e.g. 8"}
                           suffix="doses"
+                          disabled={isEndedByNextPhaseStart}
                         />
                       )}
                     </>
@@ -1053,8 +1084,8 @@ export const AddPeptidePage: React.FC = () => {
                       value={isLast ? "" : row.durationValue}
                       onChange={(e) => updateDoseScheduleRow(row.id, { durationValue: e.target.value })}
                       min="1"
-                      placeholder={isLast ? "Continuous" : "e.g. 4"}
-                      disabled={isLast}
+                      placeholder={isLast ? "Continuous" : isEndedByNextPhaseStart ? "Ends at next phase" : "e.g. 4"}
+                      disabled={isLast || isEndedByNextPhaseStart}
                     />
                   )}
 
@@ -1126,6 +1157,88 @@ export const AddPeptidePage: React.FC = () => {
             onChange={(e) => setInjectionTime(e.target.value || "09:00")}
             required
           />
+
+          <div
+            style={{
+              marginTop: "12px",
+              padding: "12px",
+              borderRadius: "var(--border-radius-sm)",
+              border: "1px solid var(--border-color)",
+              background: "var(--bg-input)",
+            }}
+          >
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                color: "var(--text-primary)",
+                fontWeight: 700,
+                fontSize: "0.9rem",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={cycleEnabled}
+                onChange={(e) => setCycleEnabled(e.target.checked)}
+                style={{ width: "18px", height: "18px", accentColor: "var(--color-primary)" }}
+              />
+              Cycle dosing
+            </label>
+            {cycleEnabled && (
+              <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <div className="form-row-grid">
+                  <Input
+                    label="On"
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    value={cycleWeeksOn}
+                    onChange={(e) => setCycleWeeksOn(e.target.value)}
+                    suffix="weeks"
+                  />
+                  <Input
+                    label="Off"
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    value={cycleWeeksOff}
+                    onChange={(e) => setCycleWeeksOff(e.target.value)}
+                    suffix="weeks"
+                  />
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                  {[
+                    { label: "8 on / 4 off", on: "8", off: "4" },
+                    { label: "4 on / 2 off", on: "4", off: "2" },
+                    { label: "12 on / 4 off", on: "12", off: "4" },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        setCycleWeeksOn(preset.on);
+                        setCycleWeeksOff(preset.off);
+                      }}
+                      style={{
+                        border: "1px solid var(--border-color)",
+                        background: "transparent",
+                        color: "var(--text-secondary)",
+                        borderRadius: "999px",
+                        padding: "7px 10px",
+                        fontSize: "0.8rem",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
         </Card>
 

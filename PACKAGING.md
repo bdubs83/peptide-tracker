@@ -1,55 +1,53 @@
-# Packaging Peptide Vault as an Android APK with Capacitor
+# Packaging Inner Circle for Android and iOS
 
-This guide explains how to bundle the "Peptide Vault" PWA into a native Android APK using Capacitor.
+The app now uses Capacitor as a native wrapper around the existing React/Vite build. The browser/Firebase Hosting version still builds from `dist`, and the native Android/iOS projects are synced from that same output.
 
-## Prerequisites
+## Shared web build
 
-1. **Node.js**: Installed on your development machine.
-2. **Android Studio**: Installed, with SDK Platforms and Build Tools configured.
-3. **Java Development Kit (JDK)**: JDK 17 or higher (usually bundled with Android Studio).
+```bash
+npm run build
+```
 
-## Step-by-Step Build Guide
+## Sync native projects
 
-1. **Build the Production Web App**
-   Compile the React Vite app into static assets:
-   ```bash
-   npm run build
-   ```
-   This will create a `dist/` directory containing all CSS, JS, HTML, and PWA assets.
+```bash
+npm run cap:sync
+```
 
-2. **Install Capacitor Core and CLI**
-   Add Capacitor's core dependencies to your project:
-   ```bash
-   npm install @capacitor/core @capacitor/cli
-   ```
+This builds the web app and copies the latest `dist` files into both native projects.
 
-3. **Initialize Capacitor**
-   Initialize Capacitor with the app name, package ID, and compiled asset directory (`dist`):
-   ```bash
-   npx cap init "Peptide Vault" "com.thewrightremodel.peptidevault" --web-dir=dist
-   ```
+## Android debug APK
 
-4. **Add the Android Platform**
-   Install and link the Capacitor Android adapter:
-   ```bash
-   npm install @capacitor/android
-   npx cap add android
-   ```
+```bash
+npm run cap:build:android
+```
 
-5. **Sync Web Assets**
-   Copy all the compiled PWA assets from `dist/` into the native Android template directory:
-   ```bash
-   npx cap sync android
-   ```
+The debug APK is written to:
 
-6. **Open in Android Studio**
-   Open Android Studio focused on the native Capacitor Android codebase:
-   ```bash
-   npx cap open android
-   ```
+```text
+android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-7. **Compile the APK**
-   Inside Android Studio, compile the APK:
-   - Go to **Build** > **Build Bundle(s) / APK(s)** > **Build APK(s)**.
-   - The compiled `.apk` file will be generated in `android/app/build/outputs/apk/debug/app-debug.apk`.
-   - To sign the APK for distribution, go to **Build** > **Generate Signed Bundle / APK...** and follow the standard signing prompts.
+For Play Store release, open the Android project and create a signed release bundle:
+
+```bash
+npm run cap:open:android
+```
+
+Then use Android Studio's signed app bundle flow.
+
+## iOS App Store build
+
+The iOS project is scaffolded in `ios/`, but final build, signing, simulator testing, and App Store archive creation require macOS with Xcode.
+
+```bash
+npm run cap:open:ios
+```
+
+On the Mac, run `npm install`, `npm run cap:sync`, then open the iOS project in Xcode to configure signing and archive the app.
+
+## App identity
+
+- App name: `Inner Circle`
+- App id / bundle id: `com.retaunfiltered.innercircle`
+- Web assets directory: `dist`

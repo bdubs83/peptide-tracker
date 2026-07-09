@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Inner Circle</string>
+    <string name="title_activity_main">Inner Circle</string>
+    <string name="package_name">com.retaunfiltered.innercircle</string>
+    <string name="custom_url_scheme">com.retaunfiltered.innercircle</string>
+</resources>

@@ -19,6 +19,7 @@ import type { InjectionLog } from "../types/injectionLog";
 import type { WeightLog } from "../types/weightLog";
 import type { StockItem } from "../types/stock";
 import type { VaultUser } from "../types/vaultUser";
+import type { VialAdjustment } from "../types/vialAdjustment";
 import type { AppSetting } from "../db/schema";
 
 export type SyncCollectionName =
@@ -28,6 +29,7 @@ export type SyncCollectionName =
   | "weightLogs"
   | "stockItems"
   | "vaultUsers"
+  | "vialAdjustments"
   | "appSettings";
 
 type SyncRecord =
@@ -37,6 +39,7 @@ type SyncRecord =
   | WeightLog
   | StockItem
   | VaultUser
+  | VialAdjustment
   | AppSetting;
 type CloudRecord = SyncRecord & { syncedAt?: string };
 
@@ -92,6 +95,7 @@ const collectionNames: SyncCollectionName[] = [
   "weightLogs",
   "stockItems",
   "vaultUsers",
+  "vialAdjustments",
   "appSettings",
 ];
 
@@ -141,6 +145,7 @@ const getLocalRecords = async (collectionName: SyncCollectionName): Promise<Sync
   if (collectionName === "weightLogs") return db.weightLogs.toArray();
   if (collectionName === "stockItems") return db.stockItems.toArray();
   if (collectionName === "vaultUsers") return db.vaultUsers.toArray();
+  if (collectionName === "vialAdjustments") return db.vialAdjustments.toArray();
   return db.appSettings.toArray();
 };
 
@@ -182,6 +187,7 @@ const putLocalRecords = async (collectionName: SyncCollectionName, records: Sync
   if (collectionName === "weightLogs") await db.weightLogs.bulkPut(timestampedRecords as WeightLog[]);
   if (collectionName === "stockItems") await db.stockItems.bulkPut(timestampedRecords as StockItem[]);
   if (collectionName === "vaultUsers") await db.vaultUsers.bulkPut(timestampedRecords as VaultUser[]);
+  if (collectionName === "vialAdjustments") await db.vialAdjustments.bulkPut(timestampedRecords as VialAdjustment[]);
   if (collectionName === "appSettings") await db.appSettings.bulkPut(timestampedRecords as AppSetting[]);
 };
 
@@ -192,6 +198,7 @@ const clearLocalCollection = async (collectionName: SyncCollectionName) => {
   if (collectionName === "weightLogs") await db.weightLogs.clear();
   if (collectionName === "stockItems") await db.stockItems.clear();
   if (collectionName === "vaultUsers") await db.vaultUsers.clear();
+  if (collectionName === "vialAdjustments") await db.vialAdjustments.clear();
   if (collectionName === "appSettings") await db.appSettings.clear();
 };
 
@@ -216,6 +223,10 @@ const getRecordLabel = (collectionName: SyncCollectionName, record: SyncRecord) 
   }
   if (collectionName === "stockItems") return (record as StockItem).name || getRecordId(collectionName, record);
   if (collectionName === "vaultUsers") return (record as VaultUser).displayName || getRecordId(collectionName, record);
+  if (collectionName === "vialAdjustments") {
+    const adjustment = record as VialAdjustment;
+    return `${adjustment.peptideNameSnapshot || adjustment.peptideId} adjustment on ${adjustment.adjustmentDate}`;
+  }
   return (record as AppSetting).key;
 };
 
@@ -231,6 +242,7 @@ export async function getLocalDataCounts(): Promise<CloudDataCounts> {
     weightLogs: await db.weightLogs.count(),
     stockItems: await db.stockItems.count(),
     vaultUsers: await db.vaultUsers.count(),
+    vialAdjustments: await db.vialAdjustments.count(),
     appSettings: getSyncableRecords("appSettings", await db.appSettings.toArray()).length,
   };
 }
@@ -516,7 +528,7 @@ export async function restoreCloudDataToLocal(user: User): Promise<void> {
 
   await db.transaction(
     "rw",
-    [db.peptides, db.schedules, db.injectionLogs, db.weightLogs, db.stockItems, db.vaultUsers, db.appSettings],
+    [db.peptides, db.schedules, db.injectionLogs, db.weightLogs, db.stockItems, db.vaultUsers, db.vialAdjustments, db.appSettings],
     async () => {
       for (const collectionName of collectionNames) {
         await clearLocalCollection(collectionName);

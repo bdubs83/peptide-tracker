@@ -15,6 +15,11 @@ dist-ssr
 .codex/
 .firebase/
 
+# Android release signing secrets
+android/key.properties
+android/app/*.jks
+android/app/*.keystore
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

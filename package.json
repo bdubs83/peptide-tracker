@@ -6,11 +6,23 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "cap:sync": "npm run build && cap sync",
+    "cap:build:android": "npm run cap:sync && cd android && gradlew.bat assembleDebug",
+    "cap:open:android": "cap open android",
+    "cap:open:ios": "cap open ios",
     "test": "vitest run",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor-firebase/authentication": "^8.3.0",
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/ios": "^8.4.1",
+    "@capacitor/local-notifications": "^8.2.0",
+    "@capacitor/share": "^8.0.1",
     "dexie": "^4.4.3",
     "dexie-react-hooks": "^4.4.0",
     "firebase": "^12.14.0",

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
@@ -22,6 +22,8 @@ import {
   parseLocalDate,
   getCurrentVialLogs,
   getCurrentVialTotalMcg,
+  getCurrentVialAdjustments,
+  getCurrentVialAdjustedMcg,
 } from "../../utils/dateUtils";
 import {
   formatMl,
@@ -32,6 +34,8 @@ import {
 } from "../../utils/formatting";
 import { getPreferredSchedule } from "../../utils/scheduleUtils";
 import { normalizeDoseToMcg } from "../calculator/calculatorUtils";
+import { isAvailableStock } from "../../utils/stockUtils";
+import { refillOpenVialFromStock } from "./refillFromStock";
 import {
   ChevronLeft,
   ChevronDown,
@@ -43,10 +47,13 @@ import {
   Check,
   X,
   Calculator,
+  SlidersHorizontal,
 } from "lucide-react";
 import type { InjectionLog } from "../../types/injectionLog";
-import type { DoseUnit } from "../../types/peptide";
+import type { DoseUnit, Peptide } from "../../types/peptide";
 import type { DoseScheduleDurationType, DoseSchedulePhase, PeptideSchedule } from "../../types/schedule";
+import type { StockItem } from "../../types/stock";
+import type { VialAdjustmentInputUnit, VialAdjustmentReason } from "../../types/vialAdjustment";
 
 type LogStatus = "taken" | "skipped" | "missed" | "manual";
 type InjectionSiteSide = "front" | "back";
@@ -66,6 +73,29 @@ type PendingPastDoseSave = {
   updatedSchedule: PeptideSchedule;
   pastDates: string[];
 };
+
+type RefillRequest = {
+  peptide: Peptide;
+  stockOptions: StockItem[];
+};
+
+const vialAdjustmentReasons: { value: VialAdjustmentReason; label: string }[] = [
+  { value: "familyFriend", label: "Family / friend" },
+  { value: "spillage", label: "Spillage" },
+  { value: "primingLoss", label: "Priming loss" },
+  { value: "measurementCorrection", label: "Measurement correction" },
+  { value: "discarded", label: "Discarded" },
+  { value: "other", label: "Other" },
+];
+
+const vialAdjustmentUnits: { value: VialAdjustmentInputUnit; label: string }[] = [
+  { value: "mg", label: "mg" },
+  { value: "mcg", label: "mcg" },
+  { value: "mL", label: "mL" },
+  { value: "units", label: "syringe units" },
+];
+
+const MAX_DOSE_SCHEDULE_PHASES = 15;
 
 interface InjectionSite {
   id: string;
@@ -223,11 +253,17 @@ const weekdays = [
 const buildUpdatedSchedule = (
   schedule: PeptideSchedule,
   phases: DoseSchedulePhase[],
-  doseScheduleStartDate: string
+  doseScheduleStartDate: string,
+  cycleEnabled: boolean,
+  cycleWeeksOn?: number,
+  cycleWeeksOff?: number
 ): PeptideSchedule => ({
   ...schedule,
   doseSchedule: phases,
   doseScheduleStartDate,
+  cycleEnabled,
+  cycleWeeksOn: cycleEnabled ? cycleWeeksOn : undefined,
+  cycleWeeksOff: cycleEnabled ? cycleWeeksOff : undefined,
   updatedAt: new Date().toISOString(),
 });
 
@@ -364,10 +400,35 @@ export const PeptideDetailPage: React.FC = () => {
   const [isDosingScheduleOpen, setIsDosingScheduleOpen] = useState(false);
   const [isInjectionHistoryOpen, setIsInjectionHistoryOpen] = useState(false);
   const [doseScheduleStartDate, setDoseScheduleStartDate] = useState(today);
+  const [cycleEnabled, setCycleEnabled] = useState(false);
+  const [cycleWeeksOn, setCycleWeeksOn] = useState("8");
+  const [cycleWeeksOff, setCycleWeeksOff] = useState("4");
+  const [isDoseScheduleDirty, setIsDoseScheduleDirty] = useState(false);
+  const isDoseScheduleDirtyRef = useRef(false);
+  const hydratedDoseScheduleKeyRef = useRef("");
   const [pendingPastDoseSave, setPendingPastDoseSave] = useState<PendingPastDoseSave | null>(null);
+  const [refillRequest, setRefillRequest] = useState<RefillRequest | null>(null);
+  const [selectedRefillStockId, setSelectedRefillStockId] = useState<string | null>(null);
+  const [isAdjustVialOpen, setIsAdjustVialOpen] = useState(false);
+  const [adjustmentDate, setAdjustmentDate] = useState(today);
+  const [adjustmentAmount, setAdjustmentAmount] = useState("");
+  const [adjustmentUnit, setAdjustmentUnit] = useState<VialAdjustmentInputUnit>("mg");
+  const [adjustmentReason, setAdjustmentReason] = useState<VialAdjustmentReason>("familyFriend");
+  const [adjustmentPersonLabel, setAdjustmentPersonLabel] = useState("");
+  const [adjustmentNotes, setAdjustmentNotes] = useState("");
   const [doseScheduleRows, setDoseScheduleRows] = useState<DoseScheduleRow[]>(() =>
     getDefaultDoseScheduleRows("mg")
   );
+
+  const markDoseScheduleDirty = () => {
+    isDoseScheduleDirtyRef.current = true;
+    setIsDoseScheduleDirty(true);
+  };
+
+  const markDoseScheduleClean = () => {
+    isDoseScheduleDirtyRef.current = false;
+    setIsDoseScheduleDirty(false);
+  };
 
   // Load peptide, schedule, logs, and settings
   const data = useLiveQuery(async () => {
@@ -380,24 +441,34 @@ export const PeptideDetailPage: React.FC = () => {
     const schedules = activeRecords(await db.schedules.toArray());
     const logsList = activeRecords(await db.injectionLogs.where("peptideId").equals(id).reverse().sortBy("scheduledDate"));
     const allLogs = activeRecords(await db.injectionLogs.toArray());
+    const allVialAdjustments = activeRecords(await db.vialAdjustments.toArray());
+    const stockItems = activeRecords(await db.stockItems.orderBy("createdAt").reverse().toArray());
     const settings = await db.appSettings.toArray();
-    return { peptide, schedule, peptides, schedules, logsList, allLogs, settings };
+    return { peptide, schedule, peptides, schedules, logsList, allLogs, allVialAdjustments, stockItems, settings };
   }, [id]);
 
   useEffect(() => {
     if (!data?.peptide) return;
     const peptideData = data.peptide;
     const scheduleData = data.schedule;
+    const scheduleKey = `${scheduleData?.id || "new"}:${scheduleData?.updatedAt || ""}`;
+    if (isDoseScheduleDirty && hydratedDoseScheduleKeyRef.current === scheduleKey) return;
     const rows = data.schedule?.doseSchedule?.length
       ? data.schedule.doseSchedule.map(phaseToRow)
       : getDefaultDoseScheduleRows(peptideData.desiredDoseUnit);
     queueMicrotask(() => {
+      if (isDoseScheduleDirtyRef.current && hydratedDoseScheduleKeyRef.current === scheduleKey) return;
       setDoseScheduleRows(rows);
       setDoseScheduleStartDate(
         scheduleData?.doseScheduleStartDate || scheduleData?.startDate || today
       );
+      setCycleEnabled(Boolean(scheduleData?.cycleEnabled));
+      setCycleWeeksOn(String(scheduleData?.cycleWeeksOn || 8));
+      setCycleWeeksOff(String(scheduleData?.cycleWeeksOff || 4));
+      markDoseScheduleClean();
+      hydratedDoseScheduleKeyRef.current = scheduleKey;
     });
-  }, [data?.peptide, data?.schedule, today]);
+  }, [data?.peptide, data?.schedule, isDoseScheduleDirty, today]);
 
   if (!data || !data.peptide) {
     return (
@@ -410,8 +481,9 @@ export const PeptideDetailPage: React.FC = () => {
     );
   }
 
-  const { peptide, schedule, peptides, schedules, logsList, allLogs, settings } = data;
+  const { peptide, schedule, peptides, schedules, logsList, allLogs, allVialAdjustments, stockItems, settings } = data;
   const currentVialLogs = getCurrentVialLogs(peptide, allLogs);
+  const currentVialAdjustments = getCurrentVialAdjustments(peptide, allVialAdjustments);
   const historyLogs = logsList.filter((log) => log.status !== "scheduled");
   const syringeDisplayMode = settings?.find((item) => item.key === "pref_displayMode")?.value === "mL" ? "mL" : "units";
 
@@ -422,7 +494,7 @@ export const PeptideDetailPage: React.FC = () => {
 
   const nextDate = schedule ? getNextScheduledDoseDate(schedule, today, loggedDates) : "";
   const daysUntilNext = schedule ? getDaysUntilNextScheduledDose(schedule, today, loggedDates) : null;
-  const emptyDate = getSharedOpenVialProjection(peptide, peptides, schedules, allLogs, today).emptyDate;
+  const emptyDate = getSharedOpenVialProjection(peptide, peptides, schedules, allLogs, today, allVialAdjustments).emptyDate;
   const nextScheduledDose =
     schedule && nextDate
       ? getScheduledDoseForDate(peptide, schedule, nextDate)
@@ -450,14 +522,20 @@ export const PeptideDetailPage: React.FC = () => {
   const totalTakenMcg = takenLogs.reduce((sum, log) => {
     return sum + normalizeDoseToMcg(log.doseValue, log.doseUnit);
   }, 0);
+  const adjustedMcg = getCurrentVialAdjustedMcg(peptide, allVialAdjustments);
   const totalVialMcg = getCurrentVialTotalMcg(peptide);
-  const remainingMcg = Math.max(0, totalVialMcg - totalTakenMcg);
+  const remainingMcg = Math.max(0, totalVialMcg - totalTakenMcg - adjustedMcg);
   const remainingMg = remainingMcg / 1000;
   const fullVialMcg = peptide.vialMg * 1000;
   const remainingPercent = fullVialMcg > 0 ? (remainingMcg / fullVialMcg) * 100 : 0;
   const remainingDosesCount = schedule
-    ? getEstimatedRemainingDoses(peptide, schedule, currentVialLogs, today)
+    ? getEstimatedRemainingDoses(peptide, schedule, currentVialLogs, today, allVialAdjustments)
     : Math.floor(remainingMcg / normalizeDoseToMcg(peptide.desiredDoseValue, peptide.desiredDoseUnit));
+  const availableStockForPeptide = stockItems.filter(
+    (item) =>
+      item.name.trim().toLowerCase() === peptide.name.trim().toLowerCase() &&
+      isAvailableStock(item, today)
+  );
 
   const handleDelete = async () => {
     if (confirm(`Stop tracking ${peptide.name} for this user? Past logs will stay attached to the shared vial.`)) {
@@ -467,17 +545,98 @@ export const PeptideDetailPage: React.FC = () => {
   };
 
   const handleRefillVial = () => {
-    navigate("/vault/add", {
-      state: {
-        prefilledName: peptide.name,
-        peptideMg: peptide.vialMg,
-        bacWaterMl: peptide.bacWaterMl,
-        desiredDoseValue: peptide.desiredDoseValue,
-        desiredDoseUnit: peptide.desiredDoseUnit,
-        syringeSizeMl: peptide.syringeSizeMl,
-        unitsPerMl: peptide.unitsPerMl,
-      },
+    if (availableStockForPeptide.length === 0) {
+      alert(`No available stock item matches ${peptide.name}. Add matching stock before pulling a refill.`);
+      return;
+    }
+
+    setRefillRequest({ peptide, stockOptions: availableStockForPeptide });
+    setSelectedRefillStockId(availableStockForPeptide.length === 1 ? availableStockForPeptide[0].id : null);
+  };
+
+  const closeRefillModal = () => {
+    setRefillRequest(null);
+    setSelectedRefillStockId(null);
+  };
+
+  const resetAdjustmentForm = () => {
+    setAdjustmentDate(today);
+    setAdjustmentAmount("");
+    setAdjustmentUnit("mg");
+    setAdjustmentReason("familyFriend");
+    setAdjustmentPersonLabel("");
+    setAdjustmentNotes("");
+  };
+
+  const openAdjustVialModal = () => {
+    resetAdjustmentForm();
+    setIsAdjustVialOpen(true);
+  };
+
+  const closeAdjustVialModal = () => {
+    setIsAdjustVialOpen(false);
+    resetAdjustmentForm();
+  };
+
+  const getAdjustmentAmountMcg = () => {
+    const value = Number(adjustmentAmount);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    if (adjustmentUnit === "mcg") return value;
+    if (adjustmentUnit === "mg") return value * 1000;
+    if (adjustmentUnit === "mL") return value * peptide.concentrationMcgPerMl;
+    if (adjustmentUnit === "units") return (value / peptide.unitsPerMl) * peptide.concentrationMcgPerMl;
+    return null;
+  };
+
+  const handleSaveVialAdjustment = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const amountMcg = getAdjustmentAmountMcg();
+    if (!amountMcg || amountMcg <= 0) {
+      alert("Enter a valid adjustment amount.");
+      return;
+    }
+    if (amountMcg > remainingMcg) {
+      alert("That adjustment is larger than the current remaining vial amount.");
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    await db.vialAdjustments.put({
+      id: crypto.randomUUID(),
+      peptideId: peptide.id,
+      vaultUserId: peptide.vaultUserId,
+      openVialId: peptide.openVialId || peptide.id,
+      peptideNameSnapshot: peptide.name,
+      adjustmentDate,
+      amountValue: Number(adjustmentAmount),
+      amountUnit: adjustmentUnit,
+      amountMcg,
+      reason: adjustmentReason,
+      personLabel: adjustmentPersonLabel.trim() || undefined,
+      notes: adjustmentNotes.trim() || undefined,
+      createdAt: nowIso,
+      updatedAt: nowIso,
     });
+    closeAdjustVialModal();
+  };
+
+  const handleConfirmRefillFromStock = async () => {
+    if (!refillRequest || !selectedRefillStockId) return;
+
+    const stockItem = refillRequest.stockOptions.find((item) => item.id === selectedRefillStockId);
+    if (!stockItem) return;
+
+    try {
+      await refillOpenVialFromStock({
+        peptide: refillRequest.peptide,
+        stockItem,
+        existingRemainingMg: remainingMg,
+        today,
+      });
+      closeRefillModal();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not pull this vial from stock.");
+    }
   };
 
   const handleRecalculate = () => {
@@ -577,16 +736,21 @@ export const PeptideDetailPage: React.FC = () => {
     rowId: string,
     updates: Partial<Omit<DoseScheduleRow, "id">>
   ) => {
+    markDoseScheduleDirty();
     setDoseScheduleRows((rows) =>
       rows.map((row) => (row.id === rowId ? { ...row, ...updates } : row))
     );
   };
 
   const handleAddDoseScheduleRow = () => {
-    setDoseScheduleRows((rows) => [...rows, makeDoseScheduleRow(peptide.desiredDoseUnit)]);
+    markDoseScheduleDirty();
+    setDoseScheduleRows((rows) =>
+      rows.length >= MAX_DOSE_SCHEDULE_PHASES ? rows : [...rows, makeDoseScheduleRow(peptide.desiredDoseUnit)]
+    );
   };
 
   const handleRemoveDoseScheduleRow = (rowId: string) => {
+    markDoseScheduleDirty();
     setDoseScheduleRows((rows) => {
       if (rows.length <= 1) return rows;
       return rows.filter((row) => row.id !== rowId);
@@ -594,6 +758,7 @@ export const PeptideDetailPage: React.FC = () => {
   };
 
   const toggleDoseScheduleDay = (rowId: string, day: number) => {
+    markDoseScheduleDirty();
     setDoseScheduleRows((rows) =>
       rows.map((row) => {
         if (row.id !== rowId) return row;
@@ -615,6 +780,9 @@ export const PeptideDetailPage: React.FC = () => {
       await db.schedules.update(updatedSchedule.id, {
         doseSchedule: phases,
         doseScheduleStartDate: updatedSchedule.doseScheduleStartDate,
+        cycleEnabled: updatedSchedule.cycleEnabled,
+        cycleWeeksOn: updatedSchedule.cycleWeeksOn,
+        cycleWeeksOff: updatedSchedule.cycleWeeksOff,
         updatedAt: nowIso,
       });
 
@@ -646,6 +814,7 @@ export const PeptideDetailPage: React.FC = () => {
         });
       }
     });
+    markDoseScheduleClean();
   };
 
   const handleConfirmPastDoses = async () => {
@@ -677,10 +846,24 @@ export const PeptideDetailPage: React.FC = () => {
       alert("Please choose the start date for the first dosing phase.");
       return;
     }
+    const parsedCycleWeeksOn = parseInt(cycleWeeksOn, 10);
+    const parsedCycleWeeksOff = parseInt(cycleWeeksOff, 10);
+    if (
+      cycleEnabled &&
+      (isNaN(parsedCycleWeeksOn) ||
+        parsedCycleWeeksOn <= 0 ||
+        isNaN(parsedCycleWeeksOff) ||
+        parsedCycleWeeksOff <= 0)
+    ) {
+      alert("Cycle settings need valid on and off week counts.");
+      return;
+    }
 
     const phases: DoseSchedulePhase[] = [];
     for (const [index, row] of doseScheduleRows.entries()) {
       const isLast = index === doseScheduleRows.length - 1;
+      const hasNextPhaseStartDate = Boolean(doseScheduleRows[index + 1]?.startDate);
+      const requiresDuration = !isLast && !hasNextPhaseStartDate;
       const dose = parseFloat(row.doseValue);
       const duration = parseInt(row.durationValue, 10);
       const interval = parseInt(row.intervalDays, 10);
@@ -693,8 +876,8 @@ export const PeptideDetailPage: React.FC = () => {
         alert("Every X Days dosing lines need a valid interval.");
         return;
       }
-      if (!isLast && (isNaN(duration) || duration <= 0)) {
-        alert("Each dosing schedule line before the last needs a valid duration.");
+      if (requiresDuration && (isNaN(duration) || duration <= 0)) {
+        alert("Each dosing schedule line before the last needs a valid duration unless the next phase has a start date.");
         return;
       }
       if (isDaySpecificPhase && row.daysOfWeek.length === 0) {
@@ -709,7 +892,7 @@ export const PeptideDetailPage: React.FC = () => {
         id: row.id,
         startDate: index > 0 && row.startDate ? row.startDate : undefined,
         durationType: row.durationType,
-        durationValue: isLast ? undefined : duration,
+        durationValue: requiresDuration ? duration : undefined,
         intervalDays: row.durationType === "injections" ? interval : undefined,
         daysOfWeek: isDaySpecificPhase ? row.daysOfWeek : undefined,
         doseValue: dose,
@@ -718,7 +901,14 @@ export const PeptideDetailPage: React.FC = () => {
       });
     }
 
-    const updatedSchedule = buildUpdatedSchedule(schedule, phases, doseScheduleStartDate);
+    const updatedSchedule = buildUpdatedSchedule(
+      schedule,
+      phases,
+      doseScheduleStartDate,
+      cycleEnabled,
+      parsedCycleWeeksOn,
+      parsedCycleWeeksOff
+    );
 
     const existingLogDates = new Set(
       logsList
@@ -837,7 +1027,7 @@ export const PeptideDetailPage: React.FC = () => {
           <button
             onClick={handleRefillVial}
             aria-label={`Refill ${peptide.name}`}
-            title="Refill vial"
+            title="Pull from stock"
             style={{
               background: "rgba(16, 185, 129, 0.1)",
               border: "1px solid var(--color-success)",
@@ -852,6 +1042,25 @@ export const PeptideDetailPage: React.FC = () => {
             }}
           >
             <Plus size={16} />
+          </button>
+          <button
+            onClick={openAdjustVialModal}
+            aria-label={`Adjust ${peptide.name} vial`}
+            title="Adjust vial"
+            style={{
+              background: "rgba(245, 158, 11, 0.1)",
+              border: "1px solid var(--color-warning)",
+              color: "var(--color-warning)",
+              cursor: "pointer",
+              borderRadius: "50%",
+              width: "38px",
+              height: "38px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <SlidersHorizontal size={16} />
           </button>
           <button
             onClick={handleDelete}
@@ -1016,6 +1225,14 @@ export const PeptideDetailPage: React.FC = () => {
                   <span style={{ fontWeight: 500 }}>{getFriendlyDate(schedule.doseScheduleStartDate)}</span>
                 </div>
               )}
+              {schedule?.cycleEnabled && schedule.cycleWeeksOn && schedule.cycleWeeksOff && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "var(--text-secondary)" }}>Cycle</span>
+                  <span style={{ fontWeight: 500 }}>
+                    {schedule.cycleWeeksOn} wk on / {schedule.cycleWeeksOff} wk off
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </Card>
@@ -1031,6 +1248,7 @@ export const PeptideDetailPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleAddDoseScheduleRow}
+                disabled={doseScheduleRows.length >= MAX_DOSE_SCHEDULE_PHASES}
                 style={{
                   flexShrink: 0,
                   width: "36px",
@@ -1039,10 +1257,11 @@ export const PeptideDetailPage: React.FC = () => {
                   border: "1px solid var(--color-primary)",
                   background: "rgba(99, 102, 241, 0.1)",
                   color: "var(--color-primary)",
+                  opacity: doseScheduleRows.length >= MAX_DOSE_SCHEDULE_PHASES ? 0.45 : 1,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  cursor: "pointer",
+                  cursor: doseScheduleRows.length >= MAX_DOSE_SCHEDULE_PHASES ? "not-allowed" : "pointer",
                 }}
                 title="Add dosing phase"
               >
@@ -1057,6 +1276,7 @@ export const PeptideDetailPage: React.FC = () => {
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {doseScheduleRows.map((row, index) => {
                   const isLast = index === doseScheduleRows.length - 1;
+                  const isEndedByNextPhaseStart = !isLast && Boolean(doseScheduleRows[index + 1]?.startDate);
                   const showDaysOfWeek = row.durationType === "daysOfWeek";
                   const canRemovePhase = isLast && doseScheduleRows.length > 1;
                   return (
@@ -1107,6 +1327,7 @@ export const PeptideDetailPage: React.FC = () => {
                           type="date"
                           value={index === 0 ? doseScheduleStartDate : row.startDate}
                           onChange={(e) => {
+                            markDoseScheduleDirty();
                             if (index === 0) {
                               setDoseScheduleStartDate(e.target.value);
                             } else {
@@ -1149,7 +1370,8 @@ export const PeptideDetailPage: React.FC = () => {
                               value={row.durationValue}
                               onChange={(e) => updateDoseScheduleRow(row.id, { durationValue: e.target.value })}
                               min="1"
-                              placeholder="e.g. 4"
+                              placeholder={isEndedByNextPhaseStart ? "Ends at next phase" : "e.g. 4"}
+                              disabled={isEndedByNextPhaseStart}
                             />
                           )}
                           <div className="form-group" style={{ gridColumn: "1 / -1" }}>
@@ -1213,8 +1435,9 @@ export const PeptideDetailPage: React.FC = () => {
                               value={row.durationValue}
                               onChange={(e) => updateDoseScheduleRow(row.id, { durationValue: e.target.value })}
                               min="1"
-                              placeholder="e.g. 8"
+                              placeholder={isEndedByNextPhaseStart ? "Ends at next phase" : "e.g. 8"}
                               suffix="doses"
+                              disabled={isEndedByNextPhaseStart}
                             />
                           )}
                         </>
@@ -1226,8 +1449,8 @@ export const PeptideDetailPage: React.FC = () => {
                           value={isLast ? "" : row.durationValue}
                           onChange={(e) => updateDoseScheduleRow(row.id, { durationValue: e.target.value })}
                           min="1"
-                          placeholder={isLast ? "Continuous" : "e.g. 4"}
-                          disabled={isLast}
+                          placeholder={isLast ? "Continuous" : isEndedByNextPhaseStart ? "Ends at next phase" : "e.g. 4"}
+                          disabled={isLast || isEndedByNextPhaseStart}
                         />
                       )}
                       <Input
@@ -1266,6 +1489,98 @@ export const PeptideDetailPage: React.FC = () => {
                     </div>
                   );
                 })}
+              </div>
+
+              <div
+                style={{
+                  marginTop: "12px",
+                  padding: "12px",
+                  borderRadius: "var(--border-radius-sm)",
+                  border: "1px solid var(--border-color)",
+                  background: "rgba(255,255,255,0.02)",
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    color: "var(--text-primary)",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={cycleEnabled}
+                    onChange={(e) => {
+                      markDoseScheduleDirty();
+                      setCycleEnabled(e.target.checked);
+                    }}
+                    style={{ width: "18px", height: "18px", accentColor: "var(--color-primary)" }}
+                  />
+                  Cycle dosing
+                </label>
+                {cycleEnabled && (
+                  <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div className="form-row-grid">
+                      <Input
+                        label="On"
+                        type="number"
+                        inputMode="numeric"
+                        min="1"
+                        value={cycleWeeksOn}
+                        onChange={(e) => {
+                          markDoseScheduleDirty();
+                          setCycleWeeksOn(e.target.value);
+                        }}
+                        suffix="weeks"
+                      />
+                      <Input
+                        label="Off"
+                        type="number"
+                        inputMode="numeric"
+                        min="1"
+                        value={cycleWeeksOff}
+                        onChange={(e) => {
+                          markDoseScheduleDirty();
+                          setCycleWeeksOff(e.target.value);
+                        }}
+                        suffix="weeks"
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                      {[
+                        { label: "8 on / 4 off", on: "8", off: "4" },
+                        { label: "4 on / 2 off", on: "4", off: "2" },
+                        { label: "12 on / 4 off", on: "12", off: "4" },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => {
+                            markDoseScheduleDirty();
+                            setCycleWeeksOn(preset.on);
+                            setCycleWeeksOff(preset.off);
+                          }}
+                          style={{
+                            border: "1px solid var(--border-color)",
+                            background: "transparent",
+                            color: "var(--text-secondary)",
+                            borderRadius: "999px",
+                            padding: "7px 10px",
+                            fontSize: "0.8rem",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <Button variant="primary" fullWidth style={{ marginTop: "12px" }} onClick={handleSaveDoseSchedule}>
@@ -1488,6 +1803,275 @@ export const PeptideDetailPage: React.FC = () => {
                 </Button>
                 <Button type="submit" variant="primary" fullWidth>
                   Save Log
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {refillRequest && createPortal(
+        <div
+          className="modal-overlay stock-modal-overlay"
+          onClick={closeRefillModal}
+          style={{
+            alignItems: "flex-start",
+            overflowY: "auto",
+            padding: "12px",
+          }}
+        >
+          <div
+            className="modal-content stock-modal-content"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              className="stock-modal-header"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+              }}
+            >
+              <div>
+                <h3 style={{ fontSize: "1.15rem" }}>Pull From Stock</h3>
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.84rem", marginTop: "4px" }}>
+                  {refillRequest.peptide.name}
+                </p>
+              </div>
+              <button
+                onClick={closeRefillModal}
+                aria-label="Close refill popup"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--text-secondary)",
+                  cursor: "pointer",
+                  padding: "4px",
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {refillRequest.stockOptions.map((item) => {
+                const selected = selectedRefillStockId === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setSelectedRefillStockId(item.id)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      border: selected ? "1px solid var(--color-primary)" : "1px solid var(--border-color)",
+                      borderRadius: "8px",
+                      background: selected ? "rgba(99, 102, 241, 0.12)" : "rgba(255,255,255,0.02)",
+                      color: "var(--text-primary)",
+                      padding: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
+                      <strong>{item.mgPerVial || "Unknown"} mg vial</strong>
+                      <span className="badge">{item.numberOfVials || "0"} in stock</span>
+                    </div>
+                    <div style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginTop: "6px" }}>
+                      {item.batchNumber ? `Batch ${item.batchNumber}` : "No batch listed"}
+                      {item.supplier ? ` • ${item.supplier}` : ""}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div
+              style={{
+                marginTop: "14px",
+                padding: "12px",
+                borderRadius: "8px",
+                border: "1px solid rgba(245, 158, 11, 0.38)",
+                background: "rgba(245, 158, 11, 0.08)",
+                color: "var(--text-secondary)",
+                fontSize: "0.86rem",
+                lineHeight: 1.5,
+              }}
+            >
+              Verify this vial is reconstituted the same as the existing vial:{" "}
+              <strong style={{ color: "var(--text-primary)" }}>
+                {refillRequest.peptide.bacWaterMl} mL bac water
+              </strong>
+              . The app will keep the same dose schedule and recalculate the draw amount from the selected vial mg.
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+              <Button variant="secondary" fullWidth onClick={closeRefillModal}>
+                Cancel
+              </Button>
+              <Button
+                variant="success"
+                fullWidth
+                onClick={handleConfirmRefillFromStock}
+                disabled={!selectedRefillStockId}
+              >
+                Yes, Same Reconstitution
+              </Button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {isAdjustVialOpen && createPortal(
+        <div
+          className="modal-overlay stock-modal-overlay"
+          onClick={closeAdjustVialModal}
+          style={{
+            alignItems: "flex-start",
+            overflowY: "auto",
+            padding: "12px",
+          }}
+        >
+          <div
+            className="modal-content stock-modal-content"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              className="stock-modal-header"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+              }}
+            >
+              <div>
+                <h3 style={{ fontSize: "1.15rem" }}>Adjust Vial</h3>
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.84rem", marginTop: "4px" }}>
+                  {peptide.name}
+                </p>
+              </div>
+              <button
+                onClick={closeAdjustVialModal}
+                aria-label="Close adjust vial popup"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--text-secondary)",
+                  cursor: "pointer",
+                  padding: "4px",
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveVialAdjustment} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div
+                style={{
+                  padding: "12px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--border-color)",
+                  background: "rgba(255,255,255,0.02)",
+                  display: "grid",
+                  gap: "8px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                  <span style={{ color: "var(--text-secondary)" }}>Remaining now</span>
+                  <strong>{remainingMg.toFixed(2)} mg</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                  <span style={{ color: "var(--text-secondary)" }}>Adjusted from vial</span>
+                  <strong>{(adjustedMcg / 1000).toFixed(2)} mg</strong>
+                </div>
+                {currentVialAdjustments.length > 0 && (
+                  <span style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>
+                    {currentVialAdjustments.length} adjustment{currentVialAdjustments.length === 1 ? "" : "s"} recorded for this vial.
+                  </span>
+                )}
+              </div>
+
+              <div className="form-row-grid">
+                <Input
+                  label="Date"
+                  type="date"
+                  value={adjustmentDate}
+                  onChange={(event) => setAdjustmentDate(event.target.value)}
+                  required
+                />
+                <Select
+                  label="Reason"
+                  value={adjustmentReason}
+                  onChange={(event) => setAdjustmentReason(event.target.value as VialAdjustmentReason)}
+                  options={vialAdjustmentReasons}
+                />
+              </div>
+
+              <div className="form-row-grid">
+                <Input
+                  label="Amount Removed"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  value={adjustmentAmount}
+                  onChange={(event) => setAdjustmentAmount(event.target.value)}
+                  required
+                />
+                <Select
+                  label="Unit"
+                  value={adjustmentUnit}
+                  onChange={(event) => setAdjustmentUnit(event.target.value as VialAdjustmentInputUnit)}
+                  options={vialAdjustmentUnits}
+                />
+              </div>
+
+              {adjustmentReason === "familyFriend" && (
+                <Input
+                  label="Person / Label"
+                  value={adjustmentPersonLabel}
+                  onChange={(event) => setAdjustmentPersonLabel(event.target.value)}
+                  placeholder="Optional"
+                />
+              )}
+
+              <div className="form-group">
+                <label htmlFor="adjustment-notes" className="form-label">
+                  Notes
+                </label>
+                <textarea
+                  id="adjustment-notes"
+                  className="form-control"
+                  style={{ minHeight: "70px", resize: "vertical" }}
+                  value={adjustmentNotes}
+                  onChange={(event) => setAdjustmentNotes(event.target.value)}
+                  placeholder="Optional details"
+                />
+              </div>
+
+              <div
+                style={{
+                  padding: "12px",
+                  borderRadius: "8px",
+                  border: "1px solid rgba(245, 158, 11, 0.38)",
+                  background: "rgba(245, 158, 11, 0.08)",
+                  color: "var(--text-secondary)",
+                  fontSize: "0.86rem",
+                  lineHeight: 1.5,
+                }}
+              >
+                This changes inventory only. It will not create a dose in your injection history, but it will reduce remaining vial amount and future refill carryover.
+              </div>
+
+              <div style={{ display: "flex", gap: "10px" }}>
+                <Button type="button" variant="secondary" fullWidth onClick={closeAdjustVialModal}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="success" fullWidth>
+                  Save Adjustment
                 </Button>
               </div>
             </form>
