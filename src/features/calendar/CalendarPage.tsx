@@ -53,6 +53,8 @@ import { makePreferredScheduleMap } from "../../utils/scheduleUtils";
 
 type CalendarEventFilter = "all" | "due" | "missed" | "upcoming" | "logged";
 const googleSyncedEventIdsKey = "googleCalendar_syncedEventIds";
+const calendarRepairOpenKey = "pref_calendar_repair_open";
+const calendarDueSummaryOpenKey = "pref_calendar_due_summary_open";
 const calendarRepairWindowDays = 365;
 const pastTakenRepairNote = "Marked taken by past dosing schedule repair.";
 const pastTakenRepairCreatedNote = "Marked taken by past dosing schedule repair (created).";
@@ -113,6 +115,28 @@ const toGoogleDateTime = (date: Date) => {
 const statusLabel = (status: DayEvent["status"]) => {
   if (status === "completed") return "logged";
   return status;
+};
+
+const getEventTime = (event: DayEvent) => event.schedule?.injectionTime || "09:00";
+
+const getEventTimeMinutes = (event: DayEvent) => {
+  const [hours, minutes] = getEventTime(event).split(":").map(Number);
+  return (hours || 0) * 60 + (minutes || 0);
+};
+
+const isActionableEvent = (event: DayEvent) =>
+  event.status === "missed" || event.status === "due" || event.status === "upcoming";
+
+const compareCalendarEvents = (a: DayEvent, b: DayEvent) => {
+  const aActionable = isActionableEvent(a) ? 0 : 1;
+  const bActionable = isActionableEvent(b) ? 0 : 1;
+  if (aActionable !== bActionable) return aActionable - bActionable;
+
+  const aTime = getEventTimeMinutes(a);
+  const bTime = getEventTimeMinutes(b);
+  if (aTime !== bTime) return aTime - bTime;
+
+  return a.peptide.name.localeCompare(b.peptide.name);
 };
 
 const buildGoogleCalendarPayload = (event: GoogleCalendarExportEvent) => {
@@ -421,6 +445,8 @@ export const CalendarPage: React.FC = () => {
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
   const [googleSyncMessage, setGoogleSyncMessage] = useState("");
   const [isGoogleCalendarOpen, setIsGoogleCalendarOpen] = useState(false);
+  const [isCalendarRepairOpen, setIsCalendarRepairOpen] = useState(true);
+  const [isDueSummaryOpen, setIsDueSummaryOpen] = useState(true);
   const [isRepairingCalendar, setIsRepairingCalendar] = useState(false);
   const [isRepairingPastCalendar, setIsRepairingPastCalendar] = useState(false);
   const [calendarRepairMessage, setCalendarRepairMessage] = useState("");
@@ -453,6 +479,35 @@ export const CalendarPage: React.FC = () => {
   useEffect(() => {
     void ensureDefaultVaultUser();
   }, []);
+
+  useEffect(() => {
+    const repairOpenSetting = settings?.find((setting) => setting.key === calendarRepairOpenKey);
+    const dueSummaryOpenSetting = settings?.find((setting) => setting.key === calendarDueSummaryOpenKey);
+
+    if (typeof repairOpenSetting?.value === "boolean") {
+      setIsCalendarRepairOpen(repairOpenSetting.value);
+    }
+
+    if (typeof dueSummaryOpenSetting?.value === "boolean") {
+      setIsDueSummaryOpen(dueSummaryOpenSetting.value);
+    }
+  }, [settings]);
+
+  const toggleCalendarRepairOpen = () => {
+    setIsCalendarRepairOpen((open) => {
+      const nextValue = !open;
+      void putAppSetting(calendarRepairOpenKey, nextValue);
+      return nextValue;
+    });
+  };
+
+  const toggleDueSummaryOpen = () => {
+    setIsDueSummaryOpen((open) => {
+      const nextValue = !open;
+      void putAppSetting(calendarDueSummaryOpenKey, nextValue);
+      return nextValue;
+    });
+  };
 
   useEffect(() => {
     if (googleSelectedPeptideIds.length === 0 && activeScheduledPeptides.length > 0) {
@@ -876,7 +931,11 @@ export const CalendarPage: React.FC = () => {
     const visibleTodayEvents = visibleEventsByDate.get(today);
     return visibleTodayEvents || getEventsForDay(today, peptides, schedules, logs);
   }, [logs, peptides, schedules, today, visibleEventsByDate]);
-  const dueTodayCount = dueTodayEvents.filter((event) => event.status === "due").length;
+  const dueTodayRows = useMemo(
+    () => dueTodayEvents.filter((event) => event.status === "due").sort(compareCalendarEvents),
+    [dueTodayEvents]
+  );
+  const dueTodayCount = dueTodayRows.length;
   const missedCount = allEvents.filter((event) => event.status === "missed").length;
   const filteredSelectedDayEvents = useMemo(() => selectedDayEvents.filter((event) => {
     if (eventFilter === "all") return true;
@@ -884,13 +943,22 @@ export const CalendarPage: React.FC = () => {
     return event.status === eventFilter;
   }), [eventFilter, selectedDayEvents]);
   const userById = useMemo(() => new Map((vaultUsers || []).map((user) => [user.id, user])), [vaultUsers]);
-  const groupedSelectedDayEvents = useMemo(() => Array.from(
-    filteredSelectedDayEvents.reduce((groups, event) => {
+  const groupedSelectedDayEvents = useMemo(() => {
+    const groups = filteredSelectedDayEvents.reduce((groupMap, event) => {
       const userId = event.peptide.vaultUserId || DEFAULT_VAULT_USER_ID;
-      groups.set(userId, [...(groups.get(userId) || []), event]);
-      return groups;
-    }, new Map<string, DayEvent[]>())
-  ), [filteredSelectedDayEvents]);
+      groupMap.set(userId, [...(groupMap.get(userId) || []), event]);
+      return groupMap;
+    }, new Map<string, DayEvent[]>());
+
+    return Array.from(groups.entries())
+      .map(([userId, userEvents]) => [userId, [...userEvents].sort(compareCalendarEvents)] as [string, DayEvent[]])
+      .sort(([, aEvents], [, bEvents]) => {
+        const aFirst = aEvents[0];
+        const bFirst = bEvents[0];
+        if (!aFirst || !bFirst) return aEvents.length - bEvents.length;
+        return compareCalendarEvents(aFirst, bFirst);
+      });
+  }, [filteredSelectedDayEvents]);
 
   return (
     <div className="fade-in calendar-page" style={{ paddingBottom: "30px" }}>
@@ -1005,17 +1073,74 @@ export const CalendarPage: React.FC = () => {
             <Card style={{ marginBottom: "16px", border: "1px solid rgba(245, 158, 11, 0.35)" }}>
               <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
                 <AlertTriangle size={18} style={{ color: "var(--color-warning)", flexShrink: 0, marginTop: "2px" }} />
-                <div style={{ color: "var(--text-secondary)", fontSize: "0.88rem", lineHeight: 1.5 }}>
-                  {dueTodayCount > 0 && (
-                    <div>
-                      <strong style={{ color: "var(--text-primary)" }}>{dueTodayCount}</strong> injection
-                      {dueTodayCount === 1 ? " is" : "s are"} due today.
-                    </div>
-                  )}
-                  {missedCount > 0 && (
-                    <div>
-                      <strong style={{ color: "var(--color-danger)" }}>{missedCount}</strong> missed item
-                      {missedCount === 1 ? "" : "s"} in the visible {viewMode}.
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <button
+                    type="button"
+                    onClick={toggleDueSummaryOpen}
+                    aria-expanded={isDueSummaryOpen}
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "10px",
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--text-primary)",
+                      padding: 0,
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <strong style={{ fontSize: "0.9rem" }}>
+                      {dueTodayCount > 0
+                        ? `${dueTodayCount} injection${dueTodayCount === 1 ? "" : "s"} due today`
+                        : `${missedCount} missed item${missedCount === 1 ? "" : "s"}`}
+                    </strong>
+                    {isDueSummaryOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                  </button>
+
+                  {isDueSummaryOpen && (
+                    <div style={{ display: "grid", gap: "6px", marginTop: "9px", color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.45 }}>
+                      {dueTodayRows.map((event) => {
+                        const user = userById.get(event.peptide.vaultUserId || DEFAULT_VAULT_USER_ID);
+                        const scheduledDose = event.schedule
+                          ? getScheduledDoseForDate(event.peptide, event.schedule, today)
+                          : {
+                              doseValue: event.peptide.desiredDoseValue,
+                              doseUnit: event.peptide.desiredDoseUnit,
+                            };
+                        const scheduledDraw = getDrawForDose(
+                          scheduledDose.doseValue,
+                          scheduledDose.doseUnit,
+                          event.peptide.concentrationMcgPerMl,
+                          event.peptide.unitsPerMl
+                        );
+
+                        return (
+                          <div
+                            key={`${event.peptide.id}-${getEventTime(event)}-${event.status}`}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "minmax(0, 1fr)",
+                              gap: "2px",
+                              padding: "7px 8px",
+                              border: "1px solid var(--border-color)",
+                              borderRadius: "8px",
+                              background: "rgba(255,255,255,0.03)",
+                            }}
+                          >
+                            <span style={{ color: "var(--text-primary)", fontWeight: 800 }}>
+                              {user?.displayName || "User 1"} - {getEventTime(event)} - {event.peptide.name} - {formatDose(scheduledDose.doseValue, scheduledDose.doseUnit)} - {formatUnits(scheduledDraw.drawUnits)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {missedCount > 0 && (
+                        <div style={{ color: "var(--color-danger)" }}>
+                          {missedCount} missed item{missedCount === 1 ? "" : "s"} in the visible {viewMode}.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1024,56 +1149,80 @@ export const CalendarPage: React.FC = () => {
           )}
 
           <Card style={{ marginBottom: "16px" }}>
-            <h2 style={{ fontSize: "1.05rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <RefreshCw size={18} style={{ color: "var(--color-primary)" }} />
-              Calendar Repair
-            </h2>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginBottom: "12px", lineHeight: 1.45 }}>
-              Upcoming repair restores future schedule placeholders. Past repair creates real taken logs and can change next-dose and vial remaining calculations.
-            </p>
-            <Button
-              variant="secondary"
-              fullWidth
-              onClick={handleRepairUpcomingCalendar}
-              disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
+            <button
+              type="button"
+              onClick={toggleCalendarRepairOpen}
+              aria-expanded={isCalendarRepairOpen}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "10px",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-primary)",
+                padding: 0,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
             >
-              {isRepairingCalendar ? <Loader2 size={16} /> : <RefreshCw size={16} />}
-              {isRepairingCalendar ? "Repairing..." : "Repair Upcoming Calendar"}
-            </Button>
-            <Button
-              variant="secondary"
-              fullWidth
-              onClick={handleRepairPastTakenCalendar}
-              disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
-              style={{ marginTop: "10px" }}
-            >
-              {isRepairingPastCalendar ? <Loader2 size={16} /> : <Check size={16} />}
-              {isRepairingPastCalendar ? "Repairing..." : "Mark Past Schedule Taken"}
-            </Button>
-            <Button
-              variant="ghost"
-              fullWidth
-              onClick={handleUndoPastTakenCalendarRepair}
-              disabled={isRepairingCalendar || isRepairingPastCalendar || !logs}
-              style={{ marginTop: "8px" }}
-            >
-              <X size={16} />
-              Undo Past Repair
-            </Button>
-            <Button
-              variant="secondary"
-              fullWidth
-              onClick={handleRepairHistoryDoseAmounts}
-              disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
-              style={{ marginTop: "8px" }}
-            >
-              {isRepairingPastCalendar ? <Loader2 size={16} /> : <RefreshCw size={16} />}
-              Repair History Dose Amounts
-            </Button>
-            {calendarRepairMessage && (
-              <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "10px", lineHeight: 1.45 }}>
-                {calendarRepairMessage}
-              </p>
+              <h2 style={{ fontSize: "1.05rem", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                <RefreshCw size={18} style={{ color: "var(--color-primary)" }} />
+                Calendar Repair
+              </h2>
+              {isCalendarRepairOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </button>
+            {isCalendarRepairOpen && (
+              <div style={{ marginTop: "10px" }}>
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginBottom: "12px", lineHeight: 1.45 }}>
+                  Upcoming repair restores future schedule placeholders. Past repair creates real taken logs and can change next-dose and vial remaining calculations.
+                </p>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={handleRepairUpcomingCalendar}
+                  disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
+                >
+                  {isRepairingCalendar ? <Loader2 size={16} /> : <RefreshCw size={16} />}
+                  {isRepairingCalendar ? "Repairing..." : "Repair Upcoming Calendar"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={handleRepairPastTakenCalendar}
+                  disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
+                  style={{ marginTop: "10px" }}
+                >
+                  {isRepairingPastCalendar ? <Loader2 size={16} /> : <Check size={16} />}
+                  {isRepairingPastCalendar ? "Repairing..." : "Mark Past Schedule Taken"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  fullWidth
+                  onClick={handleUndoPastTakenCalendarRepair}
+                  disabled={isRepairingCalendar || isRepairingPastCalendar || !logs}
+                  style={{ marginTop: "8px" }}
+                >
+                  <X size={16} />
+                  Undo Past Repair
+                </Button>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={handleRepairHistoryDoseAmounts}
+                  disabled={isRepairingCalendar || isRepairingPastCalendar || !peptides || !schedules || !logs}
+                  style={{ marginTop: "8px" }}
+                >
+                  {isRepairingPastCalendar ? <Loader2 size={16} /> : <RefreshCw size={16} />}
+                  Repair History Dose Amounts
+                </Button>
+                {calendarRepairMessage && (
+                  <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginTop: "10px", lineHeight: 1.45 }}>
+                    {calendarRepairMessage}
+                  </p>
+                )}
+              </div>
             )}
           </Card>
 
