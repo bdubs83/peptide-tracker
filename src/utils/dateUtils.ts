@@ -251,6 +251,18 @@ export function getDoseScheduleOccurrences(
     const phase = dosePhases[phaseIndex];
     const nextPhase = dosePhases[phaseIndex + 1];
 
+    // An end date is inclusive, so a dose can still occur on that date but never after it.
+    if (phase.endDate && currentDate > phase.endDate) {
+      if (phaseIndex < dosePhases.length - 1) {
+        phaseIndex += 1;
+        phaseStartDate = getNextPhaseStartDate(dosePhases[phaseIndex], currentDate);
+        currentDate = phaseStartDate;
+        injectionsInPhase = 0;
+        continue;
+      }
+      break;
+    }
+
     if (nextPhase?.startDate && currentDate >= nextPhase.startDate) {
       phaseIndex += 1;
       phaseStartDate = nextPhase.startDate;
@@ -335,12 +347,15 @@ export function getWeekBasedDoseScheduleStockProjection(
   const phases = (schedule.doseSchedule || []).filter((phase) => phase.doseValue > 0);
   if (phases.length === 0) return null;
   if (phases.some((phase) => phase.durationType === "injections")) return null;
+  // This projection is a weekly approximation and cannot accurately represent a final
+  // partial week. The occurrence-based stock projection handles end-dated schedules.
+  if (phases.some((phase) => phase.endDate)) return null;
 
   let remainingMcg = totalMcg;
   let daysUntilEmpty = 0;
   let dosePeriods = 0;
 
-  for (const [index, phase] of phases.entries()) {
+  for (const phase of phases) {
     const doseMcg = normalizeDoseToMcg(phase.doseValue, phase.doseUnit);
     if (doseMcg <= 0) return null;
 
@@ -350,7 +365,7 @@ export function getWeekBasedDoseScheduleStockProjection(
         : doseMcg;
     if (weeklyDoseMcg <= 0) return null;
 
-    const isContinuous = phase.isContinuous || index === phases.length - 1 || !phase.durationValue;
+    const isContinuous = phase.isContinuous || !phase.durationValue;
     const phaseWeeks = isContinuous ? Infinity : phase.durationValue || 0;
 
     if (!Number.isFinite(phaseWeeks)) {
@@ -464,9 +479,19 @@ export function getScheduledDoseForDate(
 }
 
 export function isCurrentVialLog(peptide: Peptide, log: InjectionLog): boolean {
+  if (log.inventoryAssignment === "unassigned" || log.inventoryAssignment === "historical") return false;
+  if (log.inventoryAssignment === "assigned") {
+    const openVialId = peptide.openVialId || peptide.id;
+    return (log.openVialId || log.peptideId) === openVialId;
+  }
   if (!peptide.currentVialStartedAt) return true;
   const logTime = log.actualDateTime || log.createdAt;
   return Boolean(logTime && logTime >= peptide.currentVialStartedAt);
+}
+
+/** Legacy logs without an entry type were all schedule-related. */
+export function isCompletedScheduledInjectionLog(log: InjectionLog): boolean {
+  return log.entryType !== "adHoc" && log.status !== "scheduled";
 }
 
 export function getCurrentVialLogs(peptide: Peptide, injectionLogs: InjectionLog[]): InjectionLog[] {
@@ -527,7 +552,7 @@ export function getEstimatedRemainingDoses(
 
   const loggedScheduledDates = new Set(
     currentVialLogs
-      .filter((log) => log.status !== "scheduled")
+      .filter(isCompletedScheduledInjectionLog)
       .map((log) => log.scheduledDate)
   );
 
@@ -608,7 +633,7 @@ export function getEstimatedEmptyDate(
   // Create set of logged scheduled dates so we don't double count
   const loggedScheduledDates = new Set(
     currentVialLogs
-      .filter((log) => log.status !== "scheduled")
+      .filter(isCompletedScheduledInjectionLog)
       .map((log) => log.scheduledDate)
   );
 
@@ -687,7 +712,7 @@ export function getSharedOpenVialProjection(
 
     const logsForSchedule = currentVialLogs.filter((log) => log.peptideId === schedule.peptideId);
     const loggedScheduledDates = new Set(
-      logsForSchedule.filter((log) => log.status !== "scheduled").map((log) => log.scheduledDate)
+      logsForSchedule.filter(isCompletedScheduledInjectionLog).map((log) => log.scheduledDate)
     );
 
     if (hasDoseSchedule(schedule)) {

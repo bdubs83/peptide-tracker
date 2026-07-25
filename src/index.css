@@ -604,6 +604,103 @@ select.form-control {
   top: 28px;
 }
 
+.desktop-page-content .vault-list-column {
+  display: contents !important;
+}
+
+.desktop-page-content .vault-list-column > :not(.bac-water-card) {
+  grid-column: 1;
+}
+
+.desktop-page-content .vault-list-column > .bac-water-card {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.desktop-page-content .vault-detail-panel {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.page-loading {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+/* A local navigation layer for Health Tracker. It sits directly above the
+   app-wide mobile navigation, so health sections do not compete with Vault,
+   Calendar, and Tools. */
+.health-subnav {
+  position: fixed;
+  z-index: 99;
+  bottom: calc(68px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, 480px);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 7px 8px;
+  gap: 4px;
+  background: color-mix(in srgb, var(--bg-modal) 94%, transparent);
+  border-top: 1px solid var(--border-color);
+  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.16);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+}
+
+.health-page-content {
+  padding-bottom: 142px;
+}
+
+.health-subnav button {
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px 2px;
+  min-height: 49px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.health-subnav button.active {
+  color: var(--color-primary);
+  background: var(--bg-active-soft);
+}
+
+/* On desktop, the Health Tracker sections belong at the top of the page rather
+   than in the mobile-only fixed bottom layer. */
+.desktop-health-page-content .health-subnav {
+  position: sticky;
+  z-index: 10;
+  top: 16px;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  width: 100%;
+  margin: 0 0 20px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.desktop-health-page-content .health-subnav button {
+  min-height: 42px;
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+
 .welcome-banner-overlay {
   position: fixed;
   inset: 0;
@@ -1093,6 +1190,10 @@ select.form-control {
 }
 
 .stock-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   flex: 0 0 auto;
   padding: 20px 20px 14px;
   border-bottom: 1px solid var(--border-color);

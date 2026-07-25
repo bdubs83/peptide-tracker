@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getDoseScheduleOccurrences,
+  getNextScheduledDoseDate,
   getNextInjectionDate,
   getUpcomingInjectionDates,
   getEstimatedEmptyDate,
@@ -8,6 +9,7 @@ import {
   getEstimatedRemainingDoses,
   getSharedOpenVialProjection,
   getCurrentVialTotalMcg,
+  getCurrentVialLogs,
   isCurrentVialLog,
   isDateInActiveCycle,
 } from "./dateUtils";
@@ -18,6 +20,18 @@ import type { InjectionLog } from "../types/injectionLog";
 import type { VialAdjustment } from "../types/vialAdjustment";
 
 describe("dateUtils", () => {
+  it("includes a deliberately assigned backdated dose in its linked vial", () => {
+    const peptide = { id: "p1", name: "Test", openVialId: "vial-1", currentVialStartedAt: "2026-07-08T12:00:00.000Z" } as Peptide;
+    const log = { id: "log-1", peptideId: "p1", openVialId: "vial-1", inventoryAssignment: "assigned", actualDateTime: "2026-07-04T12:00:00.000Z" } as InjectionLog;
+    expect(isCurrentVialLog(peptide, log)).toBe(true);
+  });
+
+  it("excludes a dose left unassigned for later reconciliation", () => {
+    const peptide = { id: "p1", name: "Test", openVialId: "vial-1" } as Peptide;
+    const log = { id: "log-1", peptideId: "p1", inventoryAssignment: "unassigned" } as InjectionLog;
+    expect(isCurrentVialLog(peptide, log)).toBe(false);
+  });
+
   describe("getNextInjectionDate - everyXDays", () => {
     it("should calculate correct next date with startDate anchor", () => {
       const schedule: PeptideSchedule = {
@@ -283,6 +297,35 @@ describe("dateUtils", () => {
       );
 
       expect(dates).toEqual(["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"]);
+    });
+
+    it("stops a final dosing phase after its inclusive end date", () => {
+      const schedule: PeptideSchedule = {
+        id: "s1",
+        peptideId: "p1",
+        scheduleType: "everyXDays",
+        doseScheduleStartDate: "2026-06-01",
+        doseSchedule: [
+          {
+            id: "phase-1",
+            durationType: "injections",
+            intervalDays: 2,
+            endDate: "2026-06-05",
+            doseValue: 500,
+            doseUnit: "mcg",
+            isContinuous: false,
+          },
+        ],
+        isActive: true,
+        createdAt: "2026-06-01T12:00:00Z",
+        updatedAt: "2026-06-01T12:00:00Z",
+      };
+
+      const dates = getDoseScheduleOccurrences(schedule, "2026-06-01", "2026-06-10").map(
+        (occurrence) => occurrence.date
+      );
+
+      expect(dates).toEqual(["2026-06-01", "2026-06-03", "2026-06-05"]);
     });
 
     it("uses dosing schedule weekday dates instead of the main injection interval", () => {
@@ -973,6 +1016,106 @@ describe("dateUtils", () => {
       expect(projection?.daysUntilEmpty).toBe(600);
       expect(projection?.emptyDate).toBe("2028-02-12");
       expect(projection?.injectionCount).toBe(85);
+    });
+  });
+
+  describe("getNextScheduledDoseDate", () => {
+    it("advances a weekly dose schedule after that scheduled date is logged", () => {
+      const schedule: PeptideSchedule = {
+        id: "retatrutide-schedule",
+        peptideId: "retatrutide",
+        scheduleType: "everyXDays",
+        intervalDays: 3,
+        startDate: "2026-06-16",
+        doseScheduleStartDate: "2026-05-31",
+        doseSchedule: [
+          {
+            id: "four-mg-start",
+            durationType: "weeks",
+            durationValue: 4,
+            doseValue: 4,
+            doseUnit: "mg",
+          },
+          {
+            id: "four-mg-bridge",
+            durationType: "weeks",
+            doseValue: 4,
+            doseUnit: "mg",
+          },
+          {
+            id: "five-mg-continuous",
+            startDate: "2026-07-05",
+            durationType: "weeks",
+            doseValue: 5,
+            doseUnit: "mg",
+            isContinuous: true,
+          },
+        ],
+        isActive: true,
+        createdAt: "2026-06-16T22:36:04.468Z",
+        updatedAt: "2026-07-04T23:23:08.295Z",
+      };
+
+      expect(getNextScheduledDoseDate(schedule, "2026-07-12", new Set(["2026-07-12"]))).toBe(
+        "2026-07-19"
+      );
+    });
+
+    it("keeps a completed schedule date after a vial is changed later that day", () => {
+      const peptide: Peptide = {
+        id: "retatrutide",
+        name: "Retatrutide",
+        vialMg: 60,
+        bacWaterMl: 3,
+        desiredDoseValue: 5,
+        desiredDoseUnit: "mg",
+        syringeSizeMl: 1,
+        unitsPerMl: 100,
+        concentrationMgPerMl: 20,
+        concentrationMcgPerMl: 20000,
+        doseMl: 0.25,
+        doseUnits: 25,
+        estimatedDosesPerVial: 12,
+        percentOfVialPerDose: 8.33,
+        openVialId: "new-vial",
+        currentVialStartedAt: "2026-07-12T22:38:00.000Z",
+        currentVialTotalMg: 62,
+        createdAt: "2026-06-16T22:36:04.468Z",
+        updatedAt: "2026-07-12T22:38:00.000Z",
+      };
+      const schedule: PeptideSchedule = {
+        id: "retatrutide-schedule",
+        peptideId: peptide.id,
+        scheduleType: "everyXDays",
+        intervalDays: 7,
+        doseScheduleStartDate: "2026-07-05",
+        doseSchedule: [{ id: "five-mg", durationType: "weeks", doseValue: 5, doseUnit: "mg", isContinuous: true }],
+        isActive: true,
+        createdAt: peptide.createdAt,
+        updatedAt: peptide.updatedAt,
+      };
+      const completedBeforeVialChange: InjectionLog = {
+        id: "july-12-dose",
+        peptideId: peptide.id,
+        openVialId: "old-vial",
+        peptideNameSnapshot: peptide.name,
+        scheduledDate: "2026-07-12",
+        actualDateTime: "2026-07-12T19:03:00.000Z",
+        doseValue: 5,
+        doseUnit: "mg",
+        drawMl: 0.25,
+        drawUnits: 25,
+        status: "taken",
+        createdAt: "2026-07-12T19:03:00.000Z",
+        updatedAt: "2026-07-12T19:03:00.000Z",
+      };
+
+      // The old log must not reduce the new vial's balance.
+      expect(getCurrentVialLogs(peptide, [completedBeforeVialChange])).toEqual([]);
+      // It must still fulfill the person's July 12 scheduled dose.
+      expect(getNextScheduledDoseDate(schedule, "2026-07-12", new Set([completedBeforeVialChange.scheduledDate]))).toBe(
+        "2026-07-19"
+      );
     });
   });
 });

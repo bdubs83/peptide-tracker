@@ -5,6 +5,8 @@ export type DoseScheduleDurationType = "injections" | "weeks" | "daysOfWeek";
 export interface DoseSchedulePhase {
   id: string;
   startDate?: string;
+  /** Inclusive YYYY-MM-DD date after which this phase no longer produces doses. */
+  endDate?: string;
   durationType: DoseScheduleDurationType;
   durationValue?: number;
   intervalDays?: number;

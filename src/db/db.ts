@@ -3,9 +3,12 @@ import type { Peptide } from "../types/peptide";
 import type { PeptideSchedule } from "../types/schedule";
 import type { InjectionLog } from "../types/injectionLog";
 import type { WeightLog } from "../types/weightLog";
+import type { HealthLog } from "../types/healthLog";
 import type { StockItem } from "../types/stock";
 import type { VaultUser } from "../types/vaultUser";
 import type { VialAdjustment } from "../types/vialAdjustment";
+import type { BacWaterVial } from "../types/bacWaterVial";
+import type { BacWaterStockItem } from "../types/bacWaterStock";
 import { DEFAULT_VAULT_USER_ID } from "../types/vaultUser";
 import type { AppSetting } from "./schema";
 import { convertLegacyScheduleToDoseSchedule, scheduleNeedsDoseSchedule } from "../utils/scheduleMigration";
@@ -15,9 +18,12 @@ export class PeptideVaultDatabase extends Dexie {
   schedules!: Table<PeptideSchedule, string>;
   injectionLogs!: Table<InjectionLog, string>;
   weightLogs!: Table<WeightLog, string>;
+  healthLogs!: Table<HealthLog, string>;
   stockItems!: Table<StockItem, string>;
   vaultUsers!: Table<VaultUser, string>;
   vialAdjustments!: Table<VialAdjustment, string>;
+  bacWaterVials!: Table<BacWaterVial, string>;
+  bacWaterStockItems!: Table<BacWaterStockItem, string>;
   appSettings!: Table<AppSetting, string>;
 
   constructor() {
@@ -177,6 +183,100 @@ export class PeptideVaultDatabase extends Dexie {
       vaultUsers: "id, sortOrder",
       vialAdjustments: "id, peptideId, adjustmentDate, reason, vaultUserId, openVialId",
     });
+    this.version(7).stores({
+      peptides: "id, name, createdAt, vaultUserId, openVialId",
+      schedules: "id, peptideId, isActive, vaultUserId, openVialId",
+      injectionLogs: "id, peptideId, scheduledDate, status, vaultUserId, openVialId",
+      weightLogs: "id, date, createdAt",
+      healthLogs: "id, metric, startTime, source, sourceRecordId, createdAt",
+      appSettings: "key",
+      stockItems: "id, name, createdAt, receivedDate",
+      vaultUsers: "id, sortOrder",
+      vialAdjustments: "id, peptideId, adjustmentDate, reason, vaultUserId, openVialId",
+    });
+    this.version(8).stores({
+      peptides: "id, name, createdAt, updatedAt, vaultUserId, openVialId",
+      schedules: "id, peptideId, isActive, updatedAt, vaultUserId, openVialId",
+      injectionLogs: "id, peptideId, scheduledDate, status, updatedAt, vaultUserId, openVialId",
+      weightLogs: "id, date, createdAt, updatedAt",
+      healthLogs: "id, metric, startTime, source, sourceRecordId, createdAt, updatedAt",
+      appSettings: "key, updatedAt",
+      stockItems: "id, name, createdAt, receivedDate, updatedAt",
+      vaultUsers: "id, sortOrder, updatedAt",
+      vialAdjustments: "id, peptideId, adjustmentDate, reason, updatedAt, vaultUserId, openVialId",
+    });
+    this.version(9).stores({
+      peptides: "id, name, createdAt, updatedAt, vaultUserId, openVialId",
+      schedules: "id, peptideId, isActive, updatedAt, vaultUserId, openVialId",
+      injectionLogs: "id, peptideId, scheduledDate, status, updatedAt, vaultUserId, openVialId",
+      weightLogs: "id, date, createdAt, updatedAt",
+      healthLogs: "id, metric, startTime, source, sourceRecordId, createdAt, updatedAt",
+      appSettings: "key, updatedAt",
+      stockItems: "id, name, createdAt, receivedDate, updatedAt",
+      vaultUsers: "id, sortOrder, updatedAt",
+      vialAdjustments: "id, peptideId, adjustmentDate, reason, updatedAt, vaultUserId, openVialId",
+      bacWaterVials: "id, openedAt, updatedAt",
+    });
+    this.version(10).stores({
+      peptides: "id, name, createdAt, updatedAt, vaultUserId, openVialId",
+      schedules: "id, peptideId, isActive, updatedAt, vaultUserId, openVialId",
+      injectionLogs: "id, peptideId, scheduledDate, status, updatedAt, vaultUserId, openVialId",
+      weightLogs: "id, date, createdAt, updatedAt",
+      healthLogs: "id, metric, startTime, source, sourceRecordId, createdAt, updatedAt",
+      appSettings: "key, updatedAt",
+      stockItems: "id, name, createdAt, receivedDate, updatedAt",
+      vaultUsers: "id, sortOrder, updatedAt",
+      vialAdjustments: "id, peptideId, adjustmentDate, reason, updatedAt, vaultUserId, openVialId",
+      bacWaterVials: "id, openedAt, updatedAt",
+      bacWaterStockItems: "id, volumeMlPerVial, updatedAt",
+    });
+    this.version(11).stores({
+      peptides: "id, name, createdAt, updatedAt, vaultUserId, openVialId",
+      schedules: "id, peptideId, isActive, updatedAt, vaultUserId, openVialId",
+      injectionLogs: "id, peptideId, scheduledDate, status, updatedAt, vaultUserId, openVialId",
+      weightLogs: "id, date, createdAt, updatedAt",
+      healthLogs: "id, metric, startTime, source, sourceRecordId, createdAt, updatedAt",
+      appSettings: "key, updatedAt",
+      stockItems: "id, name, createdAt, receivedDate, updatedAt",
+      vaultUsers: "id, sortOrder, updatedAt",
+      vialAdjustments: "id, peptideId, adjustmentDate, reason, updatedAt, vaultUserId, openVialId",
+      bacWaterVials: "id, openedAt, updatedAt",
+      bacWaterStockItems: "id, volumeMlPerVial, createdAt, updatedAt",
+    });
+    this.version(12)
+      .stores({
+        peptides: "id, name, createdAt, updatedAt, vaultUserId, openVialId",
+        schedules: "id, peptideId, isActive, updatedAt, vaultUserId, openVialId",
+        injectionLogs: "id, peptideId, scheduledDate, status, updatedAt, vaultUserId, openVialId",
+        weightLogs: "id, date, createdAt, updatedAt",
+        healthLogs: "id, metric, startTime, source, sourceRecordId, createdAt, updatedAt",
+        appSettings: "key, updatedAt",
+        stockItems: "id, name, createdAt, receivedDate, updatedAt",
+        vaultUsers: "id, sortOrder, updatedAt",
+        vialAdjustments: "id, peptideId, adjustmentDate, reason, updatedAt, vaultUserId, openVialId",
+        bacWaterVials: "id, openedAt, updatedAt",
+        bacWaterStockItems: "id, volumeMlPerVial, createdAt, updatedAt",
+      })
+      .upgrade(async (transaction) => {
+        const now = new Date().toISOString();
+        const weightLogs = transaction.table<WeightLog, string>("weightLogs");
+        const healthLogs = transaction.table<HealthLog, string>("healthLogs");
+
+        // Health Connect's Percentage.value is already expressed as a percent.
+        // Version 11 multiplied imported body-fat values by 100, so repair only
+        // clearly invalid Health Connect values and leave manual entries intact.
+        for (const log of await weightLogs.filter((entry) => entry.source === "healthConnect").toArray()) {
+          const bodyFat = Number(log.bodyFat);
+          if (Number.isFinite(bodyFat) && bodyFat > 100) {
+            await weightLogs.update(log.id, { bodyFat: (bodyFat / 100).toFixed(1), updatedAt: now });
+          }
+        }
+        for (const log of await healthLogs.where("metric").equals("bodyFat").toArray()) {
+          if (log.source === "healthConnect" && log.value !== undefined && log.value > 100) {
+            await healthLogs.update(log.id, { value: log.value / 100, updatedAt: now });
+          }
+        }
+      });
   }
 }
 

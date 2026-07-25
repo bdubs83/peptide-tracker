@@ -51,7 +51,6 @@ import {
   Cloud,
   LogIn,
   LogOut,
-  Smartphone,
   HelpCircle,
   FileText,
   MessageCircle,
@@ -62,6 +61,8 @@ import type { InjectionLog } from "../../types/injectionLog";
 import type { StockItem } from "../../types/stock";
 import type { VaultUser } from "../../types/vaultUser";
 import type { VialAdjustment } from "../../types/vialAdjustment";
+import type { BacWaterVial } from "../../types/bacWaterVial";
+import type { BacWaterStockItem } from "../../types/bacWaterStock";
 import type { AppSetting } from "../../db/schema";
 import { exportFile, textToBlob } from "../../utils/fileExport";
 import type { AppTheme, LayoutMode } from "../../db/schema";
@@ -81,6 +82,10 @@ import {
   type DeviceNotificationPermission,
 } from "../reminders/deviceNotifications";
 import { welcomeNotesSeenVersionKey, welcomeNotesVersion, welcomeUpdateNotes } from "../../app/welcomeNotes";
+import { isDuplicateWeightCsvRow, parseWeightCsv } from "../health/weightCsvImport";
+import { HealthSettingsCard } from "../health/HealthSettingsCard";
+import { calculateBmi, healthProfileHeightCmKey } from "../health/healthCalculations";
+import { minimalistHiddenTabsKey, minimalistTabs, type MinimalistTabId } from "../../app/navigation";
 
 type DisplayMode = "units" | "mL";
 type DosingUnit = "mcg" | "mg";
@@ -100,6 +105,8 @@ type BackupData = {
   stockItems?: StockItem[];
   vaultUsers?: VaultUser[];
   vialAdjustments?: VialAdjustment[];
+  bacWaterVials?: BacWaterVial[];
+  bacWaterStockItems?: BacWaterStockItem[];
   appSettings: AppSetting[];
 };
 
@@ -132,7 +139,28 @@ const cloudCollectionLabels: Record<string, string> = {
   stockItems: "Stock",
   vaultUsers: "Users",
   vialAdjustments: "Vial Adjustments",
+  bacWaterVials: "BAC Water Vials",
+  bacWaterStockItems: "BAC Water Stock",
   appSettings: "Settings",
+};
+
+type SettingsPanelProps = {
+  id: string;
+  title: string;
+  icon: React.ReactNode;
+  expanded: string | null;
+  onToggle: (id: string) => void;
+  children: React.ReactNode;
+};
+
+const SettingsPanel: React.FC<SettingsPanelProps> = ({ id, title, icon, expanded, onToggle, children }) => {
+  const isExpanded = expanded === id;
+  return <Card style={{ marginBottom: "12px", padding: 0, overflow: "hidden" }}>
+    <button type="button" onClick={() => onToggle(id)} aria-expanded={isExpanded} className={`btn ${isExpanded ? "btn-primary" : "btn-secondary"}`} style={{ width: "100%", minHeight: "56px", borderRadius: 0, justifyContent: "flex-start", padding: "14px 16px", fontSize: "1rem" }}>
+      {icon}<span>{title}</span>
+    </button>
+    {isExpanded && <div style={{ padding: "18px 16px 16px" }}>{children}</div>}
+  </Card>;
 };
 
 // Local date/time input helper functions
@@ -252,6 +280,8 @@ const isBackupData = (value: unknown): value is BackupData => {
     (candidate.vaultUsers === undefined || candidate.vaultUsers.every(isVaultUserBackupRecord)) &&
     (candidate.vialAdjustments === undefined || Array.isArray(candidate.vialAdjustments)) &&
     (candidate.vialAdjustments === undefined || candidate.vialAdjustments.every(isVialAdjustmentBackupRecord)) &&
+    (candidate.bacWaterVials === undefined || Array.isArray(candidate.bacWaterVials)) &&
+    (candidate.bacWaterStockItems === undefined || Array.isArray(candidate.bacWaterStockItems)) &&
     Array.isArray(candidate.appSettings) &&
     candidate.appSettings.every(isAppSettingBackupRecord)
   );
@@ -565,6 +595,148 @@ type ProfilePageProps = {
   mode?: "full" | "bodyTracker";
 };
 
+interface BmiChartProps {
+  entries: WeightLog[];
+  heightCm: number;
+  weightUnit: string;
+}
+
+const BmiChart: React.FC<BmiChartProps> = ({ entries, heightCm, weightUnit }) => {
+  const generatedGradientId = useId();
+  const gradientId = `bmi-area-grad-${generatedGradientId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
+  const [chartSize, setChartSize] = useState({ width: 500, height: 220 });
+
+  const parsedEntries = useMemo(() => entries
+    .map((entry) => {
+      const parsedWeight = parseFloat(entry.weight);
+      const weightKg = weightUnit === "kg" ? parsedWeight : parsedWeight / 2.2046226218;
+      return {
+        ...entry,
+        parsedWeight,
+        bmi: calculateBmi(weightKg, heightCm) ?? Number.NaN,
+        timestamp: new Date(`${entry.date}T${entry.time || "12:00"}`).getTime(),
+      };
+    })
+    .filter((entry) => Number.isFinite(entry.parsedWeight) && Number.isFinite(entry.bmi))
+    .sort((left, right) => left.timestamp - right.timestamp), [entries, heightCm, weightUnit]);
+
+  const width = 500;
+  const height = 220;
+  const padding = { top: 20, right: 20, bottom: 35, left: 55 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const minTime = parsedEntries[0]?.timestamp || 0;
+  const maxTime = parsedEntries[parsedEntries.length - 1]?.timestamp || minTime;
+  const xScale = useCallback((timestamp: number) => {
+    if (minTime === maxTime) return padding.left + plotWidth / 2;
+    return padding.left + ((timestamp - minTime) / (maxTime - minTime)) * plotWidth;
+  }, [maxTime, minTime, padding.left, plotWidth]);
+
+  const bmiValues = parsedEntries.map((entry) => entry.bmi);
+  const minBmi = bmiValues.length > 0 ? Math.min(...bmiValues) : 0;
+  const maxBmi = bmiValues.length > 0 ? Math.max(...bmiValues) : 0;
+  const bmiPadding = (maxBmi - minBmi) * 0.15 || 1;
+  const yMin = Math.max(0, minBmi - bmiPadding);
+  const yMax = maxBmi + bmiPadding;
+  const yScale = useCallback((bmi: number) => {
+    if (yMax === yMin) return padding.top + plotHeight / 2;
+    return padding.top + plotHeight - ((bmi - yMin) / (yMax - yMin)) * plotHeight;
+  }, [padding.top, plotHeight, yMax, yMin]);
+
+  const linePath = useMemo(() => parsedEntries.length < 2 ? "" : parsedEntries
+    .map((entry, index) => `${index === 0 ? "M" : "L"} ${xScale(entry.timestamp).toFixed(1)} ${yScale(entry.bmi).toFixed(1)}`)
+    .join(" "), [parsedEntries, xScale, yScale]);
+  const areaPath = useMemo(() => {
+    if (parsedEntries.length < 2) return "";
+    const startX = xScale(parsedEntries[0].timestamp);
+    const endX = xScale(parsedEntries[parsedEntries.length - 1].timestamp);
+    const bottomY = padding.top + plotHeight;
+    return `${linePath} L ${endX.toFixed(1)} ${bottomY.toFixed(1)} L ${startX.toFixed(1)} ${bottomY.toFixed(1)} Z`;
+  }, [linePath, padding.top, parsedEntries, plotHeight, xScale]);
+  const yTicks = useMemo(() => Array.from({ length: 5 }, (_, index) => yMin + (index / 4) * (yMax - yMin)), [yMax, yMin]);
+  const xTicks = useMemo(() => {
+    if (parsedEntries.length <= 1) return [];
+    if (parsedEntries.length <= 3) return parsedEntries;
+    return [parsedEntries[0], parsedEntries[Math.floor(parsedEntries.length / 2)], parsedEntries[parsedEntries.length - 1]];
+  }, [parsedEntries]);
+  const hoveredEntry = hoveredIndex !== null ? parsedEntries[hoveredIndex] : null;
+
+  if (parsedEntries.length === 0) return null;
+
+  return (
+    <div style={{ width: "100%", position: "relative", marginBottom: "16px" }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        onMouseMove={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setChartSize({ width: bounds.width, height: bounds.height });
+          const svgX = ((event.clientX - bounds.left) / bounds.width) * width;
+          let bestIndex = 0;
+          let bestDistance = Infinity;
+          parsedEntries.forEach((entry, index) => {
+            const distance = Math.abs(xScale(entry.timestamp) - svgX);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              bestIndex = index;
+            }
+          });
+          setHoveredIndex(bestIndex);
+          setHoverPoint({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+        }}
+        onMouseLeave={() => {
+          setHoveredIndex(null);
+          setHoverPoint(null);
+        }}
+        style={{ width: "100%", height: "220px", display: "block", borderRadius: "10px", border: "1px solid var(--border-color)", background: "rgba(9, 10, 15, 0.45)" }}
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--color-success)" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="var(--color-success)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {yTicks.map((tick, index) => {
+          const y = yScale(tick);
+          return <g key={`bmi-y-grid-${index}`}>
+            <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} stroke="rgba(255, 255, 255, 0.05)" strokeWidth="1" />
+            <text x={padding.left - 8} y={y + 4} fill="var(--text-muted)" fontSize="9" textAnchor="end" fontWeight="700">{tick.toFixed(1)}</text>
+          </g>;
+        })}
+        {xTicks.map((tick, index) => {
+          const x = xScale(tick.timestamp);
+          return <g key={`bmi-x-grid-${index}`}>
+            <line x1={x} x2={x} y1={padding.top} y2={height - padding.bottom} stroke="rgba(255, 255, 255, 0.03)" strokeWidth="1" />
+            <text x={x} y={height - 10} fill="var(--text-muted)" fontSize="9" textAnchor="middle" fontWeight="700">{tick.date.slice(5)}</text>
+          </g>;
+        })}
+        {areaPath && <path d={areaPath} fill={`url(#${gradientId})`} style={{ transition: "d 0.3s ease-out" }} />}
+        {linePath && <path d={linePath} fill="none" stroke="var(--color-success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: "d 0.3s ease-out" }} />}
+        {parsedEntries.map((entry, index) => (
+          <circle
+            key={entry.id}
+            cx={xScale(entry.timestamp)}
+            cy={yScale(entry.bmi)}
+            r={index === hoveredIndex ? 5.5 : 3.5}
+            fill="var(--color-success)"
+            stroke="var(--bg-base)"
+            strokeWidth={index === hoveredIndex ? 2 : 1.5}
+            style={{ transition: "cx 0.3s, cy 0.3s, r 0.15s" }}
+          />
+        ))}
+      </svg>
+      {hoveredEntry && hoverPoint && (
+        <div style={{ position: "absolute", top: `${Math.max(8, Math.min(hoverPoint.y + 14, chartSize.height - 80))}px`, left: `${Math.max(8, Math.min(hoverPoint.x + 14, chartSize.width - 150))}px`, zIndex: 10, width: "140px", padding: "8px 10px", border: "1px solid var(--border-color)", borderRadius: "8px", background: "rgba(13, 14, 21, 0.96)", boxShadow: "var(--shadow-md)", pointerEvents: "none", fontSize: "0.76rem", lineHeight: 1.45 }}>
+          <div style={{ fontWeight: 800, color: "var(--text-primary)" }}>{hoveredEntry.date}</div>
+          <div style={{ color: "var(--color-success)", fontWeight: 900 }}>BMI {hoveredEntry.bmi.toFixed(1)}</div>
+          <div style={{ color: "var(--text-secondary)" }}>{hoveredEntry.parsedWeight.toFixed(1)} {weightUnit}</div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const getComparisonDifferenceCount = (comparison: CloudCollectionComparison[] | null) =>
   comparison
     ? comparison.reduce((sum, item) => sum + item.localOnly.length + item.cloudOnly.length, 0)
@@ -587,7 +759,8 @@ const isAutoSyncResult = (value: unknown): value is AutoSyncResult =>
       !Array.isArray(value) &&
       typeof (value as Partial<AutoSyncResult>).uploaded === "number" &&
       typeof (value as Partial<AutoSyncResult>).downloaded === "number" &&
-      typeof (value as Partial<AutoSyncResult>).conflicts === "number"
+      typeof (value as Partial<AutoSyncResult>).conflicts === "number" &&
+      typeof (value as Partial<AutoSyncResult>).durationMs === "number"
   );
 
 const getConflictSummary = (record: AutoSyncConflict["localRecord"]) => {
@@ -605,18 +778,20 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const backupInputRef = useRef<HTMLInputElement | null>(null);
+  const weightCsvInputRef = useRef<HTMLInputElement | null>(null);
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [reminderMessage, setReminderMessage] = useState("");
   const [backupMessage, setBackupMessage] = useState("");
+  const [expandedSettingsPanel, setExpandedSettingsPanel] = useState<string | null>(null);
+  const [weightImportMessage, setWeightImportMessage] = useState("");
   const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [localCounts, setLocalCounts] = useState<CloudDataCounts | null>(null);
   const [cloudCounts, setCloudCounts] = useState<CloudDataCounts | null>(null);
   const [cloudComparison, setCloudComparison] = useState<CloudCollectionComparison[] | null>(null);
   const [cloudProfileExists, setCloudProfileExists] = useState(false);
-  const [isInstallHelpOpen, setIsInstallHelpOpen] = useState(false);
   const [isSyncHelpOpen, setIsSyncHelpOpen] = useState(false);
   const [isAutoSyncReviewOpen, setIsAutoSyncReviewOpen] = useState(false);
 
@@ -679,6 +854,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
   // Load appSettings and weightLogs
   const settingsList = useLiveQuery(() => db.appSettings.toArray());
+  const minimalistSetting = settingsList?.find((item) => item.key === minimalistHiddenTabsKey);
+  const hiddenMinimalistTabs: MinimalistTabId[] = Array.isArray(minimalistSetting?.value)
+    ? (minimalistSetting.value as string[]).filter((item): item is MinimalistTabId => minimalistTabs.some((tab) => tab.id === item))
+    : [];
+  const toggleSettingsPanel = (id: string) => setExpandedSettingsPanel((current) => current === id ? null : id);
+  const toggleMinimalistTab = (id: MinimalistTabId) => {
+    const next = hiddenMinimalistTabs.includes(id) ? hiddenMinimalistTabs.filter((item) => item !== id) : [...hiddenMinimalistTabs, id];
+    void putAppSetting(minimalistHiddenTabsKey, next);
+  };
   const weightLogs = useLiveQuery(async () => activeRecords(await db.weightLogs.reverse().sortBy("date")));
   const lastBackupSetting = settingsList?.find((item) => item.key === "lastBackupAt");
   const lastBackupLabel =
@@ -1229,6 +1413,42 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     setEntryToDelete(null);
   };
 
+  const handleImportWeightCsv = async (file: File) => {
+    setWeightImportMessage("");
+    const parsed = parseWeightCsv(await file.text(), measurementSystem);
+    if (parsed.rows.length === 0) {
+      setWeightImportMessage(parsed.errors[0] || "No valid weight records were found.");
+      return;
+    }
+
+    const existing = await db.weightLogs.toArray();
+    const pending: WeightLog[] = [];
+    let duplicateCount = 0;
+    const importedAt = new Date().toISOString();
+    parsed.rows.forEach((row) => {
+      if (isDuplicateWeightCsvRow(row, [...existing, ...pending])) {
+        duplicateCount += 1;
+        return;
+      }
+      pending.push({
+        ...row,
+        id: crypto.randomUUID(),
+        createdAt: importedAt,
+        updatedAt: importedAt,
+      });
+    });
+
+    const warningText = parsed.errors.length > 0 ? ` ${parsed.errors.length} row warning${parsed.errors.length === 1 ? "" : "s"} will be reported.` : "";
+    if (pending.length === 0) {
+      setWeightImportMessage(`Nothing imported. ${duplicateCount} duplicate${duplicateCount === 1 ? " was" : "s were"} already present.${warningText}`);
+      return;
+    }
+    if (!confirm(`Import ${pending.length} weight log${pending.length === 1 ? "" : "s"} from ${file.name}? ${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"} will be skipped.${warningText}`)) return;
+
+    await db.weightLogs.bulkAdd(pending);
+    setWeightImportMessage(`Imported ${pending.length} weight log${pending.length === 1 ? "" : "s"}. Skipped ${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}.${parsed.errors.length ? ` ${parsed.errors.length} warning${parsed.errors.length === 1 ? "" : "s"}: ${parsed.errors.slice(0, 2).join(" ")}` : ""}`);
+  };
+
   const handleExportBackup = async () => {
     const exportedAt = new Date().toISOString();
     const backup: BackupData = {
@@ -1241,6 +1461,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
       stockItems: await db.stockItems.toArray(),
       vaultUsers: await db.vaultUsers.toArray(),
       vialAdjustments: await db.vialAdjustments.toArray(),
+      bacWaterVials: await db.bacWaterVials.toArray(),
+      bacWaterStockItems: await db.bacWaterStockItems.toArray(),
       appSettings: await db.appSettings.toArray(),
     };
 
@@ -1276,7 +1498,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
     await db.transaction(
       "rw",
-      [db.peptides, db.schedules, db.injectionLogs, db.weightLogs, db.stockItems, db.vaultUsers, db.vialAdjustments, db.appSettings],
+      [db.peptides, db.schedules, db.injectionLogs, db.weightLogs, db.stockItems, db.vaultUsers, db.vialAdjustments, db.bacWaterVials, db.bacWaterStockItems, db.appSettings],
       async () => {
         await db.peptides.clear();
         await db.schedules.clear();
@@ -1285,6 +1507,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
         await db.stockItems.clear();
         await db.vaultUsers.clear();
         await db.vialAdjustments.clear();
+        await db.bacWaterVials.clear();
+        await db.bacWaterStockItems.clear();
         await db.appSettings.clear();
         await db.peptides.bulkPut(withSyncTimestamps(parsed.peptides, importedAt));
         await db.schedules.bulkPut(withSyncTimestamps(parsed.schedules, importedAt));
@@ -1293,6 +1517,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
         await db.stockItems.bulkPut(withSyncTimestamps(parsed.stockItems || [], importedAt));
         await db.vaultUsers.bulkPut(withSyncTimestamps(parsed.vaultUsers || [], importedAt));
         await db.vialAdjustments.bulkPut(withSyncTimestamps(parsed.vialAdjustments || [], importedAt));
+        await db.bacWaterVials.bulkPut(withSyncTimestamps(parsed.bacWaterVials || [], importedAt));
+        await db.bacWaterStockItems.bulkPut(withSyncTimestamps(parsed.bacWaterStockItems || [], importedAt));
         await db.appSettings.bulkPut(withSyncTimestamps(parsed.appSettings, importedAt));
       }
     );
@@ -1339,6 +1565,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
   const weightUnit = isMetric ? "kg" : "lbs";
   const lengthUnit = isMetric ? "cm" : "in";
   const lengthSuffix = isMetric ? " cm" : '"';
+  const profileHeightValue = settingsList?.find((item) => item.key === healthProfileHeightCmKey)?.value;
+  const bmiHeightCm = Number(profileHeightValue) > 0 ? Number(profileHeightValue) : null;
 
   const formatWeightVal = (num: number | null) => {
     if (num === null || isNaN(num)) return "--";
@@ -1401,19 +1629,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
       <div className="form-row-grid">
         <Select
-          label="Measurement System"
-          value={measurementSystem}
-          onChange={(e) => {
-            if (!isMeasurementSystem(e.target.value)) return;
-            setMeasurementSystem(e.target.value);
-            updateSetting("pref_measurementSystem", e.target.value);
-          }}
-          options={[
-            { value: "imperial", label: "Imperial (lbs, inches)" },
-            { value: "metric", label: "Metric (kg, cm)" },
-          ]}
-        />
-        <Select
           label="Measurement Tracking"
           value={trackingMode}
           onChange={(e) => {
@@ -1461,23 +1676,17 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
 
       {showSettingsPage ? (
         <>
-          <Card style={{ marginBottom: "20px" }}>
-            <div style={{ display: "grid", gap: "14px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <Smartphone size={20} style={{ color: "var(--color-primary)" }} />
-                <h2 style={{ fontSize: "1.2rem", margin: 0 }}>Install App</h2>
-              </div>
-              <Button variant="secondary" fullWidth onClick={() => setIsInstallHelpOpen(true)}>
-                How to install
-              </Button>
+          <SettingsPanel id="minimalist" title="Minimalist" icon={<Settings size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", margin: "0 0 12px", lineHeight: 1.5 }}>Keep Vault, Calendar, and Settings visible. Turn optional areas off to hide them from navigation; their data stays saved.</p>
+            <div style={{ display: "grid", gap: "9px" }}>
+              {minimalistTabs.map(({ id, label }) => {
+                const visible = !hiddenMinimalistTabs.includes(id);
+                return <div key={id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", border: "1px solid var(--border-color)", borderRadius: "var(--border-radius-sm)", padding: "11px", background: "var(--bg-input)" }}><span style={{ fontWeight: 800 }}>{label}</span><button type="button" onClick={() => toggleMinimalistTab(id)} className={`btn ${visible ? "btn-success" : "btn-secondary"}`} style={{ minWidth: "64px" }}>{visible ? "On" : "Off"}</button></div>;
+              })}
             </div>
-          </Card>
+          </SettingsPanel>
 
-          <Card style={{ marginBottom: "20px" }}>
-            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <Cloud size={20} style={{ color: "var(--color-primary)" }} />
-              Account & Cloud Sync
-            </h2>
+          <SettingsPanel id="account" title="Account & Cloud Sync" icon={<Cloud size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "12px", lineHeight: 1.5 }}>
               {cloudUser
                 ? `Signed in as ${cloudUser.email || cloudUser.displayName || "your account"}. Local data stays on this device unless you choose a sync action.`
@@ -1569,7 +1778,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                         <div style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "3px", lineHeight: 1.35 }}>
                           Last sync: {lastAutoSyncLabel}
                           {lastAutoSyncResult
-                            ? ` • Up ${lastAutoSyncResult.uploaded} / Down ${lastAutoSyncResult.downloaded} / Conflicts ${lastAutoSyncResult.conflicts}`
+                            ? ` • ${Math.max(0.1, lastAutoSyncResult.durationMs / 1000).toFixed(1)}s • Up ${lastAutoSyncResult.uploaded} / Down ${lastAutoSyncResult.downloaded} / Conflicts ${lastAutoSyncResult.conflicts}`
                             : ""}
                         </div>
                       )}
@@ -1740,13 +1949,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 {authMessage}
               </p>
             )}
-          </Card>
+          </SettingsPanel>
 
-          <Card style={{ marginBottom: "20px" }}>
-            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <FileText size={20} style={{ color: "var(--color-primary)" }} />
-              Report Center
-            </h2>
+          <SettingsPanel id="reports" title="Report Center" icon={<FileText size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "12px", lineHeight: 1.5 }}>
               Build filtered PDF and CSV exports for stock, open vials, schedules, history, body progress, and half-life reports.
             </p>
@@ -1754,13 +1959,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
               <FileText size={16} />
               Open Report Center
             </Button>
-          </Card>
+          </SettingsPanel>
 
-          <Card style={{ marginBottom: "20px" }}>
-            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <MessageCircle size={20} style={{ color: "var(--color-primary)" }} />
-              Feedback & Suggestions
-            </h2>
+          <SettingsPanel id="feedback" title="Feedback & Suggestions" icon={<MessageCircle size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "12px", lineHeight: 1.5 }}>
               Have an idea, bug report, or feature request? Share it with the community or send it privately.
             </p>
@@ -1782,13 +1983,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 Email Feedback
               </a>
             </div>
-          </Card>
+          </SettingsPanel>
 
-          <Card style={{ marginBottom: "20px" }}>
-            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <FileText size={20} style={{ color: "var(--color-primary)" }} />
-              Version Notes
-            </h2>
+          <SettingsPanel id="version" title="Version Notes" icon={<FileText size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "10px", lineHeight: 1.5 }}>
               Current release: {welcomeNotesVersion}
             </p>
@@ -1800,14 +1997,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
             <Button variant="secondary" fullWidth onClick={handleShowWelcomeNotes}>
               Show Welcome Message
             </Button>
-          </Card>
+          </SettingsPanel>
 
           {/* Preferences Section */}
-          <Card style={{ marginBottom: "20px" }}>
-            <h2 style={{ fontSize: "1.2rem", marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <Settings size={20} style={{ color: "var(--color-primary)" }} />
-              Preferences & Settings
-            </h2>
+          <SettingsPanel id="preferences" title="Preferences & Settings" icon={<Settings size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
 
             <div style={{ marginBottom: "16px" }}>
               <Select
@@ -1844,7 +2037,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
             
             <div className="form-row-grid">
               <Select
-                label="Standard Syringe Size"
+                label="Standard Injection Device"
                 value={standardSyringeSize}
                 onChange={(e) => {
                   setStandardSyringeSize(e.target.value);
@@ -1854,7 +2047,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   { value: "0.3", label: "0.3 mL" },
                   { value: "0.5", label: "0.5 mL" },
                   { value: "1.0", label: "1.0 mL" },
-                  { value: "3.0", label: "3.0 mL" },
+                  { value: "3.0", label: "3 mL Pen" },
                 ]}
               />
               <Select
@@ -1866,7 +2059,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   updateSetting("pref_displayMode", e.target.value);
                 }}
                 options={[
-                  { value: "units", label: "Syringe Units" },
+                  { value: "units", label: "Device Units" },
                   { value: "mL", label: "mL Draw" },
                 ]}
               />
@@ -1897,11 +2090,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
               />
             </div>
 
-            <div style={{ borderTop: "1px solid var(--border-color)", margin: "18px 0", paddingTop: "18px" }}>
-              <h2 style={{ fontSize: "1.05rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <Bell size={20} style={{ color: "var(--color-primary)" }} />
-              Reminder Settings
-              </h2>
+          </SettingsPanel>
+
+          <SettingsPanel id="reminders" title="Reminder Settings" icon={<Bell size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
               <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "14px", lineHeight: 1.5 }}>
                 In-app reminders show when the app is open. Device notifications use app permission on mobile and browser permission on web.
               </p>
@@ -2005,14 +2196,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   {reminderMessage}
                 </p>
               )}
-            </div>
-          </Card>
+          </SettingsPanel>
 
-          <Card style={{ marginBottom: "20px" }}>
-            <h2 style={{ fontSize: "1.2rem", marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-              <Database size={20} style={{ color: "var(--color-primary)" }} />
-              Backup & Import
-            </h2>
+          <SettingsPanel id="backup" title="Backup & Import" icon={<Database size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "12px", lineHeight: 1.5 }}>
               Local browser data can be lost if browser storage is cleared. Last backup: {lastBackupLabel}
             </p>
@@ -2045,12 +2231,45 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 {backupMessage}
               </p>
             )}
-          </Card>
+          </SettingsPanel>
+
+          <SettingsPanel id="health-profile" title="Health Profile" icon={<Scale size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
+            <HealthSettingsCard section="profile" />
+          </SettingsPanel>
+
+          <SettingsPanel id="health-tracking" title="Health Tracking" icon={<Cloud size={20} />} expanded={expandedSettingsPanel} onToggle={toggleSettingsPanel}>
+            <HealthSettingsCard section="tracking" />
+          </SettingsPanel>
 
         </>
       ) : (
         <>
           {bodyTrackerSettingsCard}
+
+          <Card style={{ marginBottom: "20px" }}>
+            <h3 style={{ fontSize: "1rem", marginBottom: "6px", display: "flex", alignItems: "center", gap: "7px" }}>
+              <Upload size={18} style={{ color: "var(--color-primary)" }} />
+              Import Weight History
+            </h3>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", marginBottom: "12px", lineHeight: 1.45 }}>
+              Import a CSV exported by another tracker. Date and Weight are required; time, unit, body fat, measurements, and notes are supported. Existing matching logs are skipped.
+            </p>
+            <input
+              ref={weightCsvInputRef}
+              type="file"
+              accept="text/csv,.csv"
+              style={{ display: "none" }}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void handleImportWeightCsv(file).finally(() => { event.target.value = ""; });
+              }}
+            />
+            <Button variant="secondary" fullWidth onClick={() => weightCsvInputRef.current?.click()}>
+              <Upload size={16} />
+              Import Weight CSV
+            </Button>
+            {weightImportMessage && <p role="status" style={{ color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.45, marginTop: "10px" }}>{weightImportMessage}</p>}
+          </Card>
 
           {/* Progress Cards */}
           <div
@@ -2205,7 +2424,30 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
             </h3>
 
             {logs && logs.length > 0 && (
-              <WeightChart entries={logs} goalWeight={goalWeightNum} weightUnit={weightUnit} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px", alignItems: "start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ marginBottom: "7px" }}>
+                    <strong style={{ fontSize: "0.86rem" }}>Weight Loss</strong>
+                    <div style={{ color: "var(--text-muted)", fontSize: "0.7rem", marginTop: "2px" }}>Weight by progress-entry date</div>
+                  </div>
+                  <WeightChart entries={logs} goalWeight={goalWeightNum} weightUnit={weightUnit} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ marginBottom: "7px" }}>
+                    <strong style={{ fontSize: "0.86rem" }}>BMI</strong>
+                    <div style={{ color: "var(--text-muted)", fontSize: "0.7rem", marginTop: "2px" }}>
+                      {bmiHeightCm ? `Calculated using ${isMetric ? `${bmiHeightCm.toFixed(1)} cm` : `${(bmiHeightCm / 2.54).toFixed(1)} in`} height` : "Add height in Settings → Health Profile"}
+                    </div>
+                  </div>
+                  {bmiHeightCm ? (
+                    <BmiChart entries={logs} heightCm={bmiHeightCm} weightUnit={weightUnit} />
+                  ) : (
+                    <div style={{ height: "220px", display: "grid", placeItems: "center", padding: "20px", textAlign: "center", borderRadius: "10px", border: "1px solid var(--border-color)", background: "rgba(9, 10, 15, 0.45)", color: "var(--text-muted)", fontSize: "0.8rem", lineHeight: 1.5 }}>
+                      Add your height under Settings → Health Profile to calculate BMI history.
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             {logs.length === 0 ? (
@@ -2368,76 +2610,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
             <div style={{ display: "flex", gap: "10px" }}>
               <Button variant="secondary" fullWidth onClick={() => setEntryToDelete(null)}>Cancel</Button>
               <Button variant="danger" fullWidth onClick={handleDeleteEntry}>Delete</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showSettingsPage && isInstallHelpOpen && (
-        <div className="modal-overlay" onClick={() => setIsInstallHelpOpen(false)}>
-          <div className="modal-content" onClick={(event) => event.stopPropagation()}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: "12px",
-                marginBottom: "16px",
-              }}
-            >
-              <h3 style={{ fontSize: "1.2rem", margin: 0 }}>How to install</h3>
-              <button
-                type="button"
-                aria-label="Close install instructions"
-                onClick={() => setIsInstallHelpOpen(false)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-secondary)",
-                  cursor: "pointer",
-                  padding: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <div>
-                <h4 style={{ fontSize: "1rem", marginBottom: "8px" }}>Android</h4>
-                <ol
-                  style={{
-                    color: "var(--text-secondary)",
-                    fontSize: "0.9rem",
-                    lineHeight: 1.55,
-                    paddingLeft: "20px",
-                  }}
-                >
-                  <li>Open this app in Chrome.</li>
-                  <li>Tap the three-dot menu.</li>
-                  <li>Tap Add to Home screen or Install app.</li>
-                  <li>Confirm Install.</li>
-                </ol>
-              </div>
-
-              <div>
-                <h4 style={{ fontSize: "1rem", marginBottom: "8px" }}>iPhone or iPad</h4>
-                <ol
-                  style={{
-                    color: "var(--text-secondary)",
-                    fontSize: "0.9rem",
-                    lineHeight: 1.55,
-                    paddingLeft: "20px",
-                  }}
-                >
-                  <li>Open this app in Safari.</li>
-                  <li>Tap the Share button.</li>
-                  <li>Choose Add to Home Screen.</li>
-                  <li>Tap Add.</li>
-                </ol>
-              </div>
             </div>
           </div>
         </div>

@@ -111,6 +111,7 @@ export const CalculatorPage: React.FC = () => {
     syringeSize === "custom"
       ? parseFloat(customSyringeSize) || 0
       : parseFloat(syringeSize);
+  const isInjectionPen = Math.abs(activeSyringeSizeMl - 3) < 0.0001;
 
   const solvedInput = useMemo(() => {
     const mg = parseFloat(peptideMg);
@@ -200,7 +201,7 @@ export const CalculatorPage: React.FC = () => {
   ]);
   const warning =
     outputs && outputs.doseMl > activeSyringeSizeMl
-      ? "Calculated draw amount exceeds selected syringe size."
+      ? `Calculated amount exceeds the selected ${isInjectionPen ? "pen capacity" : "syringe size"}.`
       : "";
 
   const handleSaveToVault = () => {
@@ -230,7 +231,7 @@ export const CalculatorPage: React.FC = () => {
             value={solveFor}
             onChange={(e) => setSolveFor(e.target.value as ReconstitutionSolveField)}
             options={[
-              { value: "drawAmount", label: syringeDisplayMode === "units" ? "Syringe Units" : "mL Draw" },
+              { value: "drawAmount", label: syringeDisplayMode === "units" ? (isInjectionPen ? "Pen Dial Units" : "Syringe Units") : "mL Draw" },
               { value: "bacWaterMl", label: "BAC Water" },
               { value: "desiredDoseValue", label: "Desired Dose" },
             ]}
@@ -288,10 +289,10 @@ export const CalculatorPage: React.FC = () => {
             label={
               solveFor === "drawAmount"
                 ? syringeDisplayMode === "units"
-                  ? "Syringe Units (calculated)"
+                  ? isInjectionPen ? "Pen Dial Setting (calculated)" : "Syringe Units (calculated)"
                   : "mL Draw (calculated)"
                 : syringeDisplayMode === "units"
-                  ? "Desired Syringe Units"
+                  ? isInjectionPen ? "Desired Pen Dial Setting" : "Desired Syringe Units"
                   : "Desired mL Draw"
             }
             type="number"
@@ -307,14 +308,14 @@ export const CalculatorPage: React.FC = () => {
 
           <div className="form-row-grid">
             <Select
-              label="Syringe Size"
+              label="Injection Device"
               value={syringeSize}
               onChange={(e) => setSyringeSize(e.target.value)}
               options={[
                 { value: "0.3", label: "0.3 mL" },
                 { value: "0.5", label: "0.5 mL" },
                 { value: "1.0", label: "1.0 mL" },
-                { value: "3.0", label: "3.0 mL" },
+                { value: "3.0", label: "3 mL Pen" },
                 { value: "custom", label: "Custom" },
               ]}
             />
@@ -343,11 +344,11 @@ export const CalculatorPage: React.FC = () => {
           </div>
 
           <Select
-            label="Syringe Display Mode"
+            label="Dose Display Mode"
             value={syringeDisplayMode}
             onChange={(e) => setSyringeDisplayMode(e.target.value as "mL" | "units")}
             options={[
-              { value: "units", label: "Syringe Units (recommended)" },
+              { value: "units", label: isInjectionPen ? "Pen Dial Units (recommended)" : "Syringe Units (recommended)" },
               { value: "mL", label: "mL Draw" },
             ]}
           />
@@ -391,7 +392,7 @@ export const CalculatorPage: React.FC = () => {
               }}
             >
               <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Required Draw Amount
+                {isInjectionPen ? "Required Pen Setting" : "Required Draw Amount"}
               </span>
               <h1
                 style={{

@@ -11,6 +11,7 @@ export interface WeightLog {
   thigh?: string;
   notes?: string;
   customMeasurements?: Record<string, string>;
+  source?: "healthConnect";
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;

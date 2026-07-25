@@ -2,13 +2,13 @@ import { db } from "../../db/db";
 import { activeRecords } from "../../db/activeRecords";
 import type { Peptide } from "../../types/peptide";
 import type { StockItem } from "../../types/stock";
-import { calculateReconstitution } from "../calculator/calculatorUtils";
 import { isAvailableStock } from "../../utils/stockUtils";
 
 type RefillFromStockInput = {
   peptide: Peptide;
   stockItem: StockItem;
   existingRemainingMg: number;
+  reconstitutionBacWaterMl: number;
   today: string;
 };
 
@@ -16,6 +16,7 @@ export async function refillOpenVialFromStock({
   peptide,
   stockItem,
   existingRemainingMg,
+  reconstitutionBacWaterMl,
   today,
 }: RefillFromStockInput) {
   if (!isAvailableStock(stockItem, today)) {
@@ -27,17 +28,15 @@ export async function refillOpenVialFromStock({
   if (!Number.isFinite(mgPerVial) || mgPerVial <= 0 || !Number.isFinite(vialCount) || vialCount <= 0) {
     throw new Error("This stock item does not have an available vial to pull.");
   }
+  if (!Number.isFinite(reconstitutionBacWaterMl) || reconstitutionBacWaterMl <= 0) {
+    throw new Error(peptide.isOilBased ? "Enter the prefilled oil volume for this vial." : "Enter the bacteriostatic-water amount used to reconstitute this vial.");
+  }
 
   const nowIso = new Date().toISOString();
   const newOpenVialId = crypto.randomUUID();
   const currentVialTotalMg = Math.max(0, existingRemainingMg) + mgPerVial;
-  const recalculated = calculateReconstitution({
-    peptideMg: mgPerVial,
-    bacWaterMl: peptide.bacWaterMl,
-    desiredDoseValue: peptide.desiredDoseValue,
-    desiredDoseUnit: peptide.desiredDoseUnit,
-    unitsPerMl: peptide.unitsPerMl,
-  });
+  const concentrationMgPerMl = mgPerVial / reconstitutionBacWaterMl;
+  const concentrationMcgPerMl = concentrationMgPerMl * 1000;
 
   const oldOpenVialId = peptide.openVialId || peptide.id;
 
@@ -51,12 +50,10 @@ export async function refillOpenVialFromStock({
     for (const sharedPeptide of sharedPeptides) {
       await db.peptides.update(sharedPeptide.id, {
         vialMg: mgPerVial,
-        concentrationMgPerMl: recalculated.concentrationMgPerMl,
-        concentrationMcgPerMl: recalculated.concentrationMcgPerMl,
-        doseMl: recalculated.doseMl,
-        doseUnits: recalculated.doseUnits,
-        estimatedDosesPerVial: recalculated.estimatedDosesPerVial,
-        percentOfVialPerDose: recalculated.percentOfVialPerDose,
+        bacWaterMl: peptide.isOilBased ? 0 : reconstitutionBacWaterMl,
+        oilVolumeMl: peptide.isOilBased ? reconstitutionBacWaterMl : undefined,
+        concentrationMgPerMl,
+        concentrationMcgPerMl,
         currentVialStartedAt: nowIso,
         currentVialTotalMg,
         openVialId: newOpenVialId,

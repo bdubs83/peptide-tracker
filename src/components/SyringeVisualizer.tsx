@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { InjectionPenVisualizer } from "./InjectionPenVisualizer";
 
 interface SyringeVisualizerProps {
   drawMl: number;
@@ -75,6 +76,16 @@ export const SyringeVisualizer: React.FC<SyringeVisualizerProps> = ({
 
     return list;
   }, [maxUnits, barrelWidth, barrelStart]);
+
+  if (Math.abs(safeSyringeSizeMl - 3) < 0.0001) {
+    return (
+      <InjectionPenVisualizer
+        drawMl={safeDrawMl}
+        unitsPerMl={safeUnitsPerMl}
+        displayMode={displayMode}
+      />
+    );
+  }
 
   return (
     <div

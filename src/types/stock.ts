@@ -1,7 +1,9 @@
 export interface StockItem {
   id: string;
   name: string;
+  productKey?: string;
   mgPerVial?: string;
+  purchasedVialCount?: string;
   numberOfVials?: string;
   batchNumber?: string;
   manufacturerDate?: string;

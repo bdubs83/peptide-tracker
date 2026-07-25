@@ -10,7 +10,7 @@ import {
 import type { PeptideCatalogItem } from "../../utils/peptideCatalog";
 import { Button } from "../../components/Button";
 import { Input } from "../../components/Input";
-import { ChevronRight, Plus, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronRight, Plus, Search, X } from "lucide-react";
 
 const statusTone: Record<string, { color: string; border: string; background: string }> = {
   Approved: { color: "var(--color-success)", border: "rgba(16, 185, 129, 0.35)", background: "rgba(16, 185, 129, 0.1)" },
@@ -42,32 +42,7 @@ function Badge({ children, tone }: { children: React.ReactNode; tone?: string | 
   );
 }
 
-function EvidenceBadge({ grade }: { grade?: string | null }) {
-  const compact = grade?.match(/[A-E]/i)?.[0]?.toUpperCase() ?? (grade ? grade.slice(0, 1).toUpperCase() : "?");
-  const suffix = grade?.includes("+") ? "+" : grade?.includes("-") ? "-" : "";
 
-  return (
-    <span
-      title={`Evidence: ${grade ?? "Unknown"}`}
-      style={{
-        display: "inline-grid",
-        minWidth: "28px",
-        height: "28px",
-        placeItems: "center",
-        borderRadius: "8px",
-        border: "1px solid rgba(99, 102, 241, 0.35)",
-        background: "rgba(99, 102, 241, 0.12)",
-        color: "var(--color-primary)",
-        padding: "0 7px",
-        fontSize: "0.72rem",
-        fontWeight: 800,
-      }}
-    >
-      {compact}
-      {suffix}
-    </span>
-  );
-}
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
@@ -147,13 +122,11 @@ function PeptideReferenceCard({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-          <EvidenceBadge grade={peptide.evidenceGrade} />
           <ChevronRight size={18} style={{ color: "var(--text-muted)" }} />
         </div>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "12px" }}>
-        <Badge tone={peptide.fdaStatus}>{peptide.fdaStatus ?? "Unknown"}</Badge>
         {peptide.categoryTags.slice(0, 3).map((tag) => (
           <Badge key={tag}>{tag}</Badge>
         ))}
@@ -224,16 +197,13 @@ function PeptideDetailsModal({
           maxWidth: "560px",
           minHeight: "auto",
           maxHeight: "calc(100dvh - 28px)",
+          overflowY: "auto",
           padding: "18px",
           borderRadius: "12px",
         }}
       >
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "9px" }}>
-              <EvidenceBadge grade={peptide.evidenceGrade} />
-              <Badge tone={peptide.fdaStatus}>{peptide.fdaStatus ?? "Unknown"}</Badge>
-            </div>
             <h2 style={{ fontSize: "1.35rem", lineHeight: 1.18 }}>{peptide.name}</h2>
             {peptide.alternateNames.length > 0 && (
               <p style={{ color: "var(--text-muted)", fontSize: "0.84rem", lineHeight: 1.45, marginTop: "5px" }}>
@@ -263,53 +233,46 @@ function PeptideDetailsModal({
           </button>
         </div>
 
-        {peptide.summary && (
+        {peptide.goal && (
           <p style={{ color: "var(--text-secondary)", fontSize: "0.92rem", lineHeight: 1.6, marginTop: "16px" }}>
-            {peptide.summary}
+            {peptide.goal}
           </p>
         )}
 
-        <div
-          style={{
-            border: "1px solid var(--border-color)",
-            borderRadius: "8px",
-            overflow: "hidden",
-            marginTop: "16px",
-          }}
-        >
-          <DetailRow label="Half-life" value={peptide.halfLifeDisplay || "Unknown"} />
-          <DetailRow label="Type" value={peptide.molecularType || "Unknown"} />
-          <DetailRow label="Dose range" value={peptide.doseRange || "Not listed"} />
-          <DetailRow label="Route" value={peptide.route || "Not listed"} />
-          <DetailRow label="Uses" value={peptide.uses || "Not listed"} />
-        </div>
-
-        {peptide.warnings.length > 0 && (
-          <div
-            style={{
-              border: "1px solid rgba(245, 158, 11, 0.28)",
-              background: "rgba(245, 158, 11, 0.07)",
-              borderRadius: "8px",
-              padding: "12px",
-              marginTop: "14px",
-            }}
-          >
-            <p
+        {(() => {
+          const isWeekly = (peptide.minDailyDose?.toLowerCase().includes("weekly") ||
+                            peptide.maxDailyDose?.toLowerCase().includes("weekly"));
+          return (
+            <div
               style={{
-                color: "var(--color-warning)",
-                fontSize: "0.72rem",
-                fontWeight: 800,
-                textTransform: "uppercase",
-                marginBottom: "5px",
+                border: "1px solid var(--border-color)",
+                borderRadius: "8px",
+                overflow: "hidden",
+                marginTop: "16px",
               }}
             >
-              Warnings
-            </p>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: 1.5 }}>
-              {peptide.warnings.join("; ")}
-            </p>
-          </div>
-        )}
+              <DetailRow
+                label={isWeekly ? "Min Weekly Rec Dose" : "Min Daily Rec Dose"}
+                value={peptide.minDailyDose || "Not listed"}
+              />
+              <DetailRow
+                label={isWeekly ? "Max Weekly Rec Dose" : "Max Daily Rec Dose"}
+                value={peptide.maxDailyDose || "Not listed"}
+              />
+              {!isWeekly && peptide.maxWeeklyDose && peptide.maxWeeklyDose.trim().toLowerCase() !== "not stated" && (
+                <DetailRow label="Max Weekly Dose" value={peptide.maxWeeklyDose} />
+              )}
+              {peptide.cycleLengthOn && peptide.cycleLengthOn.trim().toLowerCase() !== "not stated" && (
+                <DetailRow label="Cycle Length On" value={peptide.cycleLengthOn} />
+              )}
+              {peptide.cycleLengthOff && peptide.cycleLengthOff.trim().toLowerCase() !== "not stated" && (
+                <DetailRow label="Cycle Length Off" value={peptide.cycleLengthOff} />
+              )}
+              <DetailRow label="Half Life" value={peptide.halfLifeDisplay || "Unknown"} />
+              <DetailRow label="Type" value={peptide.molecularType || "Unknown"} />
+            </div>
+          );
+        })()}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: "7px", marginTop: "14px" }}>
           {peptide.categoryTags.map((tag) => (
@@ -343,6 +306,82 @@ function PeptideDetailsModal({
   );
 }
 
+function PeptidesDisclaimerModal({
+  onClose,
+}: {
+  onClose: (dontShowAgain: boolean) => void;
+}) {
+  const [dontShowAgain, setDontShowAgain] = useState(false);
+
+  return createPortal(
+    <div className="welcome-banner-overlay" role="dialog" aria-modal="true">
+      <div className="welcome-banner-panel" style={{ maxWidth: "450px", textAlign: "center" }}>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "12px",
+            borderRadius: "50%",
+            background: "rgba(245, 158, 11, 0.1)",
+            color: "var(--color-warning)",
+            margin: "0 auto 10px auto",
+            width: "fit-content",
+          }}
+        >
+          <AlertTriangle size={36} />
+        </div>
+
+        <h3 style={{ fontSize: "1.2rem", margin: "0 0 8px 0", fontFamily: "var(--font-display)" }}>
+          Data Disclaimer
+        </h3>
+
+        <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)", lineHeight: "1.5", margin: 0 }}>
+          All of this information is from{" "}
+          <a
+            href="https://peptidedosages.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--color-primary)", textDecoration: "underline" }}
+          >
+            peptidedosages.com
+          </a>{" "}
+          and is for informational purposes only, not medical or dosing advice.
+        </p>
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "8px",
+            cursor: "pointer",
+            fontSize: "0.85rem",
+            color: "var(--text-secondary)",
+            margin: "12px 0 6px 0",
+            userSelect: "none",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={dontShowAgain}
+            onChange={(e) => setDontShowAgain(e.target.checked)}
+            style={{ cursor: "pointer" }}
+          />
+          Don't show this again
+        </label>
+
+        <div style={{ marginTop: "8px" }}>
+          <Button variant="primary" fullWidth onClick={() => onClose(dontShowAgain)}>
+            Continue
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export const PeptidesPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -356,6 +395,16 @@ export const PeptidesPage: React.FC = () => {
   const [search, setSearch] = useState("");
   const [selectedTag, setSelectedTag] = useState(initialTag);
   const [selectedPeptideName, setSelectedPeptideName] = useState<string | null>(null);
+  const [showDisclaimer, setShowDisclaimer] = useState(() => {
+    return localStorage.getItem("peptides_disclaimer_dismissed") !== "true";
+  });
+
+  const handleDisclaimerClose = (dontShowAgain: boolean) => {
+    if (dontShowAgain) {
+      localStorage.setItem("peptides_disclaimer_dismissed", "true");
+    }
+    setShowDisclaimer(false);
+  };
 
   const baseFilterTags = [
     "All",
@@ -514,6 +563,10 @@ export const PeptidesPage: React.FC = () => {
           onAddToVault={() => handleAddToVault(selectedPeptide.name)}
           onTagClick={handleTagClick}
         />
+      )}
+
+      {showDisclaimer && (
+        <PeptidesDisclaimerModal onClose={handleDisclaimerClose} />
       )}
     </div>
   );

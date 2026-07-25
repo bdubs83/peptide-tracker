@@ -1,20 +1,16 @@
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Check, Copy } from "lucide-react";
 import { BottomNav } from "../components/BottomNav";
-import { isNavPathActive, navItems } from "./navigation";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "../db/db";
+import { HealthSubnav } from "../features/health/HealthSubnav";
+import { getVisibleNavItems, isNavPathActive, minimalistHiddenTabsKey } from "./navigation";
 
 type ShellProps = {
   children: React.ReactNode;
-  copied: boolean;
-  onCopyLink: () => void;
 };
 
-const BrandHeader: React.FC<
-  Pick<ShellProps, "copied" | "onCopyLink"> & {
-    compact?: boolean;
-  }
-> = ({ copied, onCopyLink, compact = false }) => (
+const BrandHeader: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
   <header className={compact ? "desktop-brand" : "header-bar"} style={compact ? undefined : { padding: "10px 16px" }}>
     <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
       <img
@@ -27,7 +23,7 @@ const BrandHeader: React.FC<
           flexShrink: 0,
         }}
       />
-      <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
         <span
           style={{
             fontFamily: "var(--font-display)",
@@ -41,39 +37,6 @@ const BrandHeader: React.FC<
         >
           Inner Circle
         </span>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-          <a
-            href="https://www.youtube.com/@RetaUnfiltered"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              fontSize: "0.75rem",
-              color: "var(--text-secondary)",
-              textDecoration: "none",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            youtube.com/@RetaUnfiltered
-          </a>
-          <button
-            onClick={onCopyLink}
-            style={{
-              background: "none",
-              border: "none",
-              color: copied ? "var(--color-success)" : "var(--text-muted)",
-              cursor: "pointer",
-              padding: "2px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            title="Copy Link"
-          >
-            {copied ? <Check size={12} /> : <Copy size={12} />}
-          </button>
-        </div>
       </div>
     </div>
 
@@ -81,36 +44,30 @@ const BrandHeader: React.FC<
   </header>
 );
 
-export const MobileAppShell: React.FC<ShellProps> = ({
-  children,
-  copied,
-  onCopyLink,
-}) => (
-  <div className="app-container mobile-app-container">
-    <BrandHeader copied={copied} onCopyLink={onCopyLink} />
-    <main className="page-content">{children}</main>
-    <BottomNav />
-  </div>
-);
+export const MobileAppShell: React.FC<ShellProps> = ({ children }) => {
+  const location = useLocation();
+  const isHealthTracker = location.pathname === "/health";
+  return <div className="app-container mobile-app-container">
+      <BrandHeader />
+      <main className={`page-content${isHealthTracker ? " health-page-content" : ""}`}>{children}</main>
+      {isHealthTracker && <HealthSubnav />}
+      <BottomNav />
+    </div>;
+};
 
-export const DesktopAppShell: React.FC<ShellProps> = ({
-  children,
-  copied,
-  onCopyLink,
-}) => {
+export const DesktopAppShell: React.FC<ShellProps> = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const isHealthTracker = location.pathname === "/health";
+  const hiddenTabs = useLiveQuery(() => db.appSettings.get(minimalistHiddenTabsKey));
+  const visibleNavItems = getVisibleNavItems(hiddenTabs?.value);
 
   return (
     <div className="desktop-app-shell">
       <aside className="desktop-sidebar">
-        <BrandHeader
-          compact
-          copied={copied}
-          onCopyLink={onCopyLink}
-        />
+        <BrandHeader compact />
         <nav className="desktop-nav" aria-label="Main navigation">
-          {navItems.map(({ path, label, Icon }) => {
+          {visibleNavItems.map(({ path, label, Icon }) => {
             const active = isNavPathActive(location.pathname, path);
             return (
               <button
@@ -126,7 +83,10 @@ export const DesktopAppShell: React.FC<ShellProps> = ({
         </nav>
       </aside>
 
-      <main className="desktop-page-content">{children}</main>
+      <main className={`desktop-page-content${isHealthTracker ? " desktop-health-page-content" : ""}`}>
+        {isHealthTracker && <HealthSubnav />}
+        {children}
+      </main>
     </div>
   );
 };

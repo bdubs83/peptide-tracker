@@ -15,6 +15,10 @@ dist-ssr
 .codex/
 .firebase/
 
+# Personal/generated working files (not required to build the app)
+.tmp_protocol_workbook/
+outputs/
+
 # Android release signing secrets
 android/key.properties
 android/app/*.jks

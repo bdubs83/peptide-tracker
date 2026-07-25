@@ -15,6 +15,12 @@ export interface PeptideCatalogItem {
   uses: string | null;
   summary: string | null;
   warnings: string[];
+  goal: string | null;
+  minDailyDose: string | null;
+  maxDailyDose: string | null;
+  maxWeeklyDose: string | null;
+  cycleLengthOn: string | null;
+  cycleLengthOff: string | null;
 }
 
 export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
@@ -37,12 +43,18 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~12 hours",
     "estimatedHalfLife": true,
     "evidenceGrade": "C",
-    "route": "Oral",
+    "route": "SubQ",
     "uses": "Fat metabolism; NNMT inhibition; Metabolic research",
     "summary": "Small-molecule NNMT inhibitor studied for its role in regulating fat cell metabolism and energy expenditure in preclinical models.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support metabolic efficiency through NNMT inhibition, potentially enhancing fat oxidation and NAD+ levels.",
+    "minDailyDose": "2.5 mg",
+    "maxDailyDose": "5 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "No explicit cycle length; daily protocol",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "ace-031",
@@ -52,22 +64,28 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "ACVR2B-Fc",
       "Soluble Activin Receptor"
     ],
-    "molecularType": "Protein",
+    "molecularType": null,
     "categoryTags": [
       "Muscle/performance"
     ],
     "fdaStatus": "Investigational",
-    "doseRange": "Research dosing",
+    "doseRange": null,
     "normalizedHalfLifeHours": 336,
     "halfLifeDisplay": "~2 weeks",
     "estimatedHalfLife": true,
     "evidenceGrade": "B-",
-    "route": "SubQ",
-    "uses": "Muscular dystrophy; Muscle wasting; Myostatin pathway inhibition",
-    "summary": "Soluble activin type IIB receptor Fc fusion protein that traps myostatin and related ligands, studied in clinical trials for Duchenne muscular dystrophy.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "adamax",
@@ -91,7 +109,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Modified analog in the Semax family of ACTH-derived nootropic peptides, studied for cognitive enhancement and neuroprotective properties.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support cognitive enhancement, neuroprotection, and neuroplasticity via BDNF upregulation.",
+    "minDailyDose": "500 µg",
+    "maxDailyDose": "1000 µg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "adipotide-prohibitin-tp01",
@@ -117,7 +141,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "warnings": [
       "Chimeric adipose-vasculature-targeted peptidomimetic that homes to prohibitin/annexin A2 on white adipose tissue endothelium and delivers a pro-apoptotic motif; noted with kidney safety concerns in early research.",
       "Research"
-    ]
+    ],
+    "goal": "Targeted reduction of fat mass via vascular targeting in adipose tissue.",
+    "minDailyDose": "250 mcg",
+    "maxDailyDose": "1000 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "4–8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "aicar",
@@ -137,7 +167,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": "AMPK activation and metabolic research",
+    "minDailyDose": "1,000 mcg",
+    "maxDailyDose": "3,000 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "alprostadil",
@@ -157,7 +193,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "aod-9604",
@@ -185,7 +227,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Modified fragment of human growth hormone (amino acids 177-191) studied for fat metabolism without the growth-promoting effects of full HGH.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support reduction of fat mass and enhance fat oxidation over time.",
+    "minDailyDose": "300 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "ara-290",
@@ -212,7 +260,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "11-amino acid peptide derived from erythropoietin that activates the innate repair receptor without stimulating erythropoiesis, studied for neuropathic conditions.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Support tissue protection, anti-inflammatory signaling, and neuropathic symptom management via IRR activation.",
+    "minDailyDose": "2 mg",
+    "maxDailyDose": "4 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "4–8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "b12-vitamin",
@@ -232,7 +286,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "botulinum-toxin",
@@ -252,7 +312,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "bpc-157",
@@ -274,12 +340,18 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~4 hours",
     "estimatedHalfLife": true,
     "evidenceGrade": "B",
-    "route": "SubQ/Oral",
+    "route": "SubQ",
     "uses": "Tissue repair; GI healing; Tendon/ligament recovery",
     "summary": "15-amino acid peptide derived from human gastric juice with extensive preclinical evidence for accelerating healing of tendon, muscle, and GI tissues.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support tissue-healing and recovery processes based on preclinical evidence.",
+    "minDailyDose": "200 mcg",
+    "maxDailyDose": "600 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "bpc-157-tb-500-blend",
@@ -307,7 +379,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Pre-mixed combination of BPC-157 and TB-500 designed for complementary tissue repair mechanisms through distinct but synergistic healing pathways.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Tissue repair research",
+    "minDailyDose": "600 mcg total",
+    "maxDailyDose": "1,000 mcg total",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "bronchogen",
@@ -327,7 +405,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "cagrilintide",
@@ -353,7 +437,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Long-acting fatty-acid acylated amylin analog designed for once-weekly dosing; studied alone and in combination with semaglutide (CagriSema) for additive weight reduction beyond GLP-1 monotherapy.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Support satiety, reduce food intake, and promote weight management over time.",
+    "minDailyDose": "0.6 mg weekly",
+    "maxDailyDose": "4.5 mg weekly",
+    "maxWeeklyDose": "4.5 mg weekly",
+    "cycleLengthOn": "12–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "cagrisema",
@@ -379,7 +469,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Fixed-ratio combination of the amylin analog cagrilintide and semaglutide in Phase 3 trials for enhanced weight management.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Satiety and weight-management research",
+    "minDailyDose": "0.25 mg of each peptide weekly",
+    "maxDailyDose": "2.4 mg of each peptide weekly",
+    "maxWeeklyDose": "2.4 mg of each peptide weekly",
+    "cycleLengthOn": "16+ weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "cardiogen",
@@ -399,7 +495,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "cartalax",
@@ -419,12 +521,18 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C",
-    "route": "SubQ/Oral",
+    "route": "SubQ",
     "uses": "Cartilage health; Joint function; Anti-aging",
     "summary": "Tripeptide bioregulator studied for cartilage and musculoskeletal tissue maintenance, part of the Khavinson peptide bioregulator family.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support connective‑tissue homeostasis and fibroblast function based on preclinical bioregulator research.",
+    "minDailyDose": "2,000 mcg",
+    "maxDailyDose": "5,000 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "cerebrolysin",
@@ -449,7 +557,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Enzymatic preparation of porcine brain proteins containing neurotrophic peptides, approved in some countries for neurodegenerative conditions and stroke recovery.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Support neuroprotection and neuronal survival through neurotrophic factor mimicry.",
+    "minDailyDose": "20 mg",
+    "maxDailyDose": "32 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "cjc-1295-dac",
@@ -475,7 +589,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Modified GHRH analog with Drug Affinity Complex enabling albumin binding for sustained growth hormone release over approximately one week.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Elevate endogenous GH and IGF-1 levels to support muscle growth, fat metabolism, recovery, and anti-aging research.",
+    "minDailyDose": "2 mg weekly",
+    "maxDailyDose": "2 mg weekly",
+    "maxWeeklyDose": "2 mg weekly",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "cjc-1295-no-dac-mod-grf-1-29",
@@ -502,7 +622,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Truncated and modified GHRH analog (amino acids 1-29) that stimulates pulsatile growth hormone release from the anterior pituitary.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Elevate endogenous GH and IGF-1 levels to support muscle growth, fat metabolism, recovery, and anti-aging research.",
+    "minDailyDose": "2 mg weekly",
+    "maxDailyDose": "2 mg weekly",
+    "maxWeeklyDose": "2 mg weekly",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "cjc-1295-ipamorelin-blend",
@@ -530,7 +656,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Pre-mixed combination of Mod GRF 1-29 and ipamorelin that synergistically amplifies growth hormone release through dual receptor activation.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Growth-hormone release research",
+    "minDailyDose": "100 mcg each",
+    "maxDailyDose": "300 mcg each",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "copper-peptide-ahk-cu",
@@ -540,23 +672,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "AHK-Cu",
       "Ala-His-Lys-Cu"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "Recovery",
       "Skin/cosmetic"
     ],
     "fdaStatus": "Research",
-    "doseRange": "Topical as directed",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "N/A (topical)",
     "estimatedHalfLife": false,
     "evidenceGrade": "C+",
-    "route": "Topical",
-    "uses": "Hair growth stimulation; Skin repair; Collagen synthesis",
-    "summary": "Copper-complexed tripeptide variant studied for stimulating hair follicle growth and collagen production, related to but distinct from GHK-Cu.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "cortagen",
@@ -575,12 +713,18 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C",
-    "route": "SubQ/Oral",
+    "route": "SubQ",
     "uses": "Brain bioregulation; Cortical function; Cognitive research",
     "summary": "Tetrapeptide bioregulator studied for its regulatory effects on brain cortical function and potential neuroprotective mechanisms.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support neural regeneration, cognitive function, and cellular repair mechanisms over time.",
+    "minDailyDose": "1,000 mcg",
+    "maxDailyDose": "2,000 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "4 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "cristagen",
@@ -589,24 +733,30 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "alternateNames": [
       "Glu-Asp-Gly-Gly (thymus bioregulator)"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "Longevity",
       "Immune support"
     ],
     "fdaStatus": "Research",
-    "doseRange": "10–20 mg/day",
+    "doseRange": null,
     "normalizedHalfLifeHours": 3,
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C",
-    "route": "Oral/SubQ",
-    "uses": "Thymic function; Immune aging; Longevity",
-    "summary": "Tetrapeptide bioregulator from the Khavinson series targeting thymic tissue; studied alongside thymalin and epithalon in Russian longevity research protocols.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Tetrapeptide bioregulator from the Khavinson series targeting thymic tissue; studied alongside thymalin and epithalon in Russian longevity research protocols.",
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "dermorphin",
@@ -626,7 +776,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "dsip-delta-sleep-inducing-peptide",
@@ -651,7 +807,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Nonapeptide originally isolated from rabbit brain that modulates sleep architecture and stress response, studied for sleep normalization without sedation.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support healthy sleep architecture and stress modulation over time.",
+    "minDailyDose": "100 mcg",
+    "maxDailyDose": "300 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "4–8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "epithalon-epitalon",
@@ -678,7 +840,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "warnings": [
       "Synthetic tetrapeptide (Ala-Glu-Asp-Gly) based on epithalamin that activates telomerase and regulates melatonin production, studied in longevity research.",
       "Research"
-    ]
+    ],
+    "goal": "Support telomere maintenance, melatonin regulation, and geroprotective effects over time.",
+    "minDailyDose": "5 mg",
+    "maxDailyDose": "5 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "20 days on",
+    "cycleLengthOff": "4–6 months off"
   },
   {
     "id": "epo",
@@ -698,7 +866,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "fat-blaster",
@@ -709,23 +883,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "LC526",
       "Lipo-C Fat Blaster"
     ],
-    "molecularType": "Blend",
+    "molecularType": null,
     "categoryTags": [
       "Metabolic",
       "Weight loss"
     ],
     "fdaStatus": "Research",
-    "doseRange": "1-2 mL",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "Blend; component-dependent",
     "estimatedHalfLife": false,
     "evidenceGrade": "LIMITED",
-    "route": "Injectable",
-    "uses": "Fat oxidation support; Liver lipid metabolism; Insulin sensitivity support; Metabolic function; Cellular energy production",
-    "summary": "Lipotropic injection blend combining L-carnitine, methionine-inositol-choline (MIC), B vitamins such as B6/B12, and NADH; formulations vary substantially by vendor.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research / supplement-style blend"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "fat-blaster-2",
@@ -736,23 +916,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "LC526",
       "Lipo-C Fat Blaster"
     ],
-    "molecularType": "Blend",
+    "molecularType": null,
     "categoryTags": [
       "Metabolic",
       "Weight loss"
     ],
     "fdaStatus": "Research",
-    "doseRange": "1-2 mL",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "Blend; component-dependent",
     "estimatedHalfLife": false,
     "evidenceGrade": "LIMITED",
-    "route": "Injectable",
-    "uses": "Fat oxidation support; Liver lipid metabolism; Insulin sensitivity support; Metabolic function; Cellular energy production",
-    "summary": "Lipotropic injection blend combining L-carnitine, methionine-inositol-choline (MIC), B vitamins such as B6/B12, and NADH; formulations vary substantially by vendor.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research / supplement-style blend"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "follistatin-344",
@@ -762,22 +948,28 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "FST-344",
       "Follistatin"
     ],
-    "molecularType": "Protein",
+    "molecularType": null,
     "categoryTags": [
       "Muscle/performance"
     ],
     "fdaStatus": "Research",
-    "doseRange": "100 mcg/day",
+    "doseRange": null,
     "normalizedHalfLifeHours": 3,
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C+",
-    "route": "SubQ",
-    "uses": "Myostatin inhibition; Muscle growth; Gene therapy research",
-    "summary": "Activin-binding protein that neutralizes myostatin and other TGF-beta superfamily members, studied for muscle growth and potential gene therapy applications.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "foxo4-dri",
@@ -801,7 +993,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "D-retro-inverso peptide that disrupts FOXO4-p53 interaction in senescent cells, selectively inducing apoptosis of aged cells in preclinical models.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Selectively clear senescent cells via disruption of FOXO4–p53 binding.",
+    "minDailyDose": "250 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "gdf-8",
@@ -821,7 +1019,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "ghk-cu",
@@ -848,7 +1052,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Copper-complexed tripeptide with evidence for stimulating collagen, elastin, and glycosaminoglycan synthesis while reducing inflammation and oxidative damage.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Present GHK-Cu research dosage, reconstitution, supplies, and measurement context in one consistent protocol.",
+    "minDailyDose": "N/A (weekly protocol)",
+    "maxDailyDose": "N/A (weekly protocol)",
+    "maxWeeklyDose": "2 mg",
+    "cycleLengthOn": "Main table 8–12+ weeks; supplies through 16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "ghrp-2",
@@ -873,7 +1083,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Second-generation GHRP with stronger GH release than GHRP-6 and somewhat less appetite stimulation, acting through the ghrelin receptor.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Stimulate endogenous growth hormone secretion through ghrelin receptor activation.",
+    "minDailyDose": "100 mcg",
+    "maxDailyDose": "300 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "ghrp-6",
@@ -897,7 +1113,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "First-generation growth hormone releasing peptide that stimulates GH secretion via the ghrelin receptor, notable for increasing appetite via ghrelin activation.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Stimulate pulsatile GH release to support muscle growth, fat loss, and recovery.",
+    "minDailyDose": "300 mcg",
+    "maxDailyDose": "900 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "glow-protocol",
@@ -925,7 +1147,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Combination featuring BPC-157, TB-500, and GHK-Cu used in public-market peptide protocols for skin rejuvenation, tissue repair, and anti-aging; evidence is based on the individual components rather than validated combination trials.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Tissue-healing research",
+    "minDailyDose": "2.33 mg total",
+    "maxDailyDose": "2.33 mg total",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "4 weeks",
+    "cycleLengthOff": "2–4 weeks"
   },
   {
     "id": "glp-1-gip-dual-agonist-research-panel",
@@ -934,25 +1162,28 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "alternateNames": [
       "Incretin combination research"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "GLP",
       "Metabolic",
       "Weight loss"
     ],
-    "fdaStatus": "Research",
-    "doseRange": "Protocol-dependent",
+    "fdaStatus": "Unknown",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
-    "halfLifeDisplay": "Varies by compound",
+    "halfLifeDisplay": "Unknown",
     "estimatedHalfLife": false,
-    "evidenceGrade": "B",
-    "route": "SubQ",
-    "uses": "Obesity research; Incretin biology; Comparative metabolic studies",
-    "summary": "Research reference covering dual incretin mechanisms combining GLP-1 and GIP receptor activation; relevant to understanding tirzepatide mechanism and next-generation obesity therapeutics.",
-    "warnings": [
-      "Research reference covering dual incretin mechanisms combining GLP-1 and GIP receptor activation; relevant to understanding tirzepatide mechanism and next-generation obesity therapeutics.",
-      "Research"
-    ]
+    "evidenceGrade": null,
+    "route": null,
+    "uses": null,
+    "summary": null,
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "glutathione",
@@ -979,7 +1210,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Endogenous tripeptide (Glu-Cys-Gly) serving as the body's primary intracellular antioxidant, studied for oxidative stress reduction and detoxification support.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support antioxidant defense, cellular detoxification, and immune function.",
+    "minDailyDose": "100 mg",
+    "maxDailyDose": "200 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "4–8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "hcg",
@@ -1003,7 +1240,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ/IM",
     "uses": "Ovulation trigger; Male hypogonadism; Testicular function",
     "summary": "Glycoprotein hormone that mimics LH activity, FDA-approved for ovulation induction in women and hypogonadism treatment in men.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Maintain testicular function and fertility during testosterone replacement therapy or restore endogenous testosterone production post‑cycle.",
+    "minDailyDose": "1,500 IU",
+    "maxDailyDose": "2,500 IU",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "healthy-hair-skin-nails-blend",
@@ -1023,7 +1266,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "hexarelin",
@@ -1033,23 +1282,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "Examorelin",
       "HEX"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "Recovery"
     ],
     "fdaStatus": "Research",
-    "doseRange": "100-200 mcg 1-3x/day",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "~70 min",
     "estimatedHalfLife": false,
     "evidenceGrade": "B-",
-    "route": "SubQ",
-    "uses": "GH release; Cardioprotection; Recovery",
-    "summary": "Hexapeptide ghrelin mimetic that produces robust GH release and has demonstrated cardioprotective properties in preclinical research.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Hexapeptide ghrelin mimetic that produces robust GH release and has demonstrated cardioprotective properties in preclinical research.",
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "hgh-somatropin",
@@ -1076,7 +1331,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ",
     "uses": "GH deficiency; Growth disorders; Body composition",
     "summary": "Recombinant human growth hormone identical to endogenous 191-amino acid GH, FDA-approved for multiple growth-related and metabolic conditions.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Support increases in lean body mass, reductions in adipose tissue, and enhanced metabolic function.",
+    "minDailyDose": "150 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "hgh-fragment-176-191",
@@ -1103,7 +1364,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "C-terminal fragment of human growth hormone studied for its lipolytic properties without affecting blood glucose or growth.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support reduction of fat mass and enhance fat oxidation over time.",
+    "minDailyDose": "300 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "hmg",
@@ -1123,7 +1390,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": "Stimulate spermatogenesis in males with hypogonadotropic hypogonadism or infertility.",
+    "minDailyDose": "N/A (weekly protocol)",
+    "maxDailyDose": "N/A (weekly protocol)",
+    "maxWeeklyDose": "75 IU",
+    "cycleLengthOn": "Minimum 12 weeks; may extend to 16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "humanin",
@@ -1133,23 +1406,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "HN",
       "HNG (S14G-Humanin)"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "Cognitive",
       "Longevity"
     ],
     "fdaStatus": "Research",
-    "doseRange": "1-5 mg/day",
+    "doseRange": null,
     "normalizedHalfLifeHours": 3,
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C+",
-    "route": "SubQ",
-    "uses": "Cytoprotection; Mitochondrial function; Neuroprotection",
-    "summary": "24-amino acid mitochondrial-derived peptide with cytoprotective effects, studied for its role in protecting against age-related cellular stress and neurodegeneration.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "hyaluronic-acid",
@@ -1169,7 +1448,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "igf-1-des",
@@ -1178,7 +1463,7 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "alternateNames": [
       "Des(1-3) IGF-1"
     ],
-    "molecularType": "Protein",
+    "molecularType": null,
     "categoryTags": [
       "Growth hormone",
       "Recovery",
@@ -1186,17 +1471,23 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "Muscle/performance"
     ],
     "fdaStatus": "Research",
-    "doseRange": "50-100 mcg pre-workout",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "~20-30 min",
     "estimatedHalfLife": false,
     "evidenceGrade": "C+",
-    "route": "SubQ",
-    "uses": "Localized muscle growth; Cell proliferation; Recovery",
-    "summary": "Truncated IGF-1 analog lacking the first three amino acids, resulting in reduced IGFBP binding and approximately 10x greater potency than native IGF-1.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "igf-1-lr3",
@@ -1224,7 +1515,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Modified IGF-1 with an arginine substitution and 13-amino-acid extension that extends half-life and reduces IGF binding protein affinity.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support anabolic processes and metabolic function through enhanced IGF-1 activity with extended bioavailability.",
+    "minDailyDose": "20 mcg",
+    "maxDailyDose": "50 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "insulin",
@@ -1244,7 +1541,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "ipamorelin",
@@ -1268,7 +1571,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Selective growth hormone secretagogue that stimulates GH release via the ghrelin receptor with minimal impact on cortisol and prolactin levels.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Stimulate endogenous growth hormone release to support anabolic processes related to muscle growth, fat metabolism, and tissue repair.",
+    "minDailyDose": "100 mcg",
+    "maxDailyDose": "250 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "2–4 weeks off"
   },
   {
     "id": "kisspeptin-10",
@@ -1297,7 +1606,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "warnings": [
       "C-terminal 10-amino acid active fragment of kisspeptin that potently stimulates GnRH release; used in reproductive endocrinology research and clinical diagnostic protocols.",
       "Investigational"
-    ]
+    ],
+    "goal": "Support physiological reproductive hormone signaling through upstream GnRH stimulation.",
+    "minDailyDose": "100 mcg",
+    "maxDailyDose": "200 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "klow",
@@ -1327,7 +1642,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Community/public-market blend commonly described as a GLOW-style stack with KPV added for anti-inflammatory support.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Regenerative and anti-inflammatory research",
+    "minDailyDose": "250 mcg each; 1.25 mg GHK-Cu",
+    "maxDailyDose": "750 mcg each; 3.75 mg GHK-Cu",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "kpv",
@@ -1350,12 +1671,18 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C+",
-    "route": "SubQ/Oral/Topical",
+    "route": "SubQ/Topical",
     "uses": "Anti-inflammatory; Gut inflammation; Skin inflammation",
     "summary": "C-terminal tripeptide fragment of alpha-MSH with anti-inflammatory properties studied for inflammatory bowel conditions and skin inflammation.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support reduction of systemic inflammation and modulate immune responses without melanotropic effects.",
+    "minDailyDose": "200 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "l-carnitine",
@@ -1385,7 +1712,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Naturally occurring amino-acid derivative essential for transporting long-chain fatty acids into mitochondria for beta-oxidation; public peptide-market entries commonly include injectable L-carnitine in metabolic stacks.",
     "warnings": [
       "Research / approved forms exist"
-    ]
+    ],
+    "goal": "Support mitochondrial fatty acid oxidation and energy metabolism while avoiding TMAO production associated with oral dosing.",
+    "minDailyDose": "50 mg",
+    "maxDailyDose": "100 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "lc216-blend",
@@ -1405,7 +1738,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "lemon-bottle",
@@ -1425,7 +1764,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "lipo-b",
@@ -1445,7 +1790,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "lipo-c",
@@ -1456,23 +1807,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "Lipotropic injection",
       "MIC + B vitamins"
     ],
-    "molecularType": "Blend",
+    "molecularType": null,
     "categoryTags": [
       "Metabolic",
       "Weight loss"
     ],
     "fdaStatus": "Research",
-    "doseRange": "1-2 mL",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "Blend; component-dependent",
     "estimatedHalfLife": false,
     "evidenceGrade": "LIMITED",
-    "route": "Injectable",
-    "uses": "Liver function support; Methylation support; Insulin sensitivity; Fat metabolism support; Modest effects",
-    "summary": "Lipotropic injection containing methionine, inositol, choline, and B vitamins; used in public-market metabolic/weight-loss contexts, with evidence mostly coming from individual components rather than the exact blend.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research / supplement-style blend"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "lipo-c-2",
@@ -1482,23 +1839,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "Lipo-C with B12",
       "MIC + B vitamins"
     ],
-    "molecularType": "Blend",
+    "molecularType": null,
     "categoryTags": [
       "Metabolic",
       "Weight loss"
     ],
     "fdaStatus": "Research",
-    "doseRange": "1-2 mL",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "Blend; component-dependent",
     "estimatedHalfLife": false,
     "evidenceGrade": "LIMITED",
-    "route": "Injectable",
-    "uses": "Liver function support; Methylation support; Insulin sensitivity; Fat metabolism support; Modest effects",
-    "summary": "Variant where the public-market description centers on MIC plus B vitamins; exact vendor formulation may differ.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research / supplement-style blend"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "lipo-c-3",
@@ -1510,23 +1873,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "Lipo-C with B12",
       "Methionine-Inositol-Choline + B vitamins"
     ],
-    "molecularType": "Blend",
+    "molecularType": null,
     "categoryTags": [
       "Metabolic",
       "Weight loss"
     ],
     "fdaStatus": "Research",
-    "doseRange": "1-2 mL",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "Blend; component-dependent",
     "estimatedHalfLife": false,
     "evidenceGrade": "LIMITED",
-    "route": "Injectable",
-    "uses": "Liver function support; Methylation support; Insulin sensitivity; Fat metabolism support; Modest effects",
-    "summary": "MIC/Lipo-C variant; public-market usage centers on methionine, inositol, choline, and B-vitamin lipotropic injection blends.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research / supplement-style blend"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "lipo-c-plus",
@@ -1546,7 +1915,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "ll-37",
@@ -1572,7 +1947,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "37-amino acid human cathelicidin antimicrobial peptide with broad-spectrum activity against bacteria, viruses, and fungi, plus immunomodulatory functions.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support antimicrobial defense and wound-healing processes.",
+    "minDailyDose": "100 µg",
+    "maxDailyDose": "400 µg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "matrixyl-palmitoyl-pentapeptide-4",
@@ -1582,23 +1963,29 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "Pal-KTTKS",
       "Matrixyl"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "Recovery",
       "Skin/cosmetic"
     ],
     "fdaStatus": "Research",
-    "doseRange": "Topical as directed",
+    "doseRange": null,
     "normalizedHalfLifeHours": null,
     "halfLifeDisplay": "N/A (topical)",
     "estimatedHalfLife": false,
     "evidenceGrade": "B-",
-    "route": "Topical",
-    "uses": "Collagen stimulation; Wrinkle repair; Skin firmness",
-    "summary": "Lipopeptide that stimulates collagen I, III, and fibronectin production in dermal fibroblasts, widely used in anti-aging skincare formulations.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "mazdutide",
@@ -1625,7 +2012,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Dual GLP-1 and glucagon receptor agonist in Phase 3 clinical development for obesity and type 2 diabetes, showing significant weight reduction.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Support chronic weight management and metabolic improvement through dual GLP‑1/glucagon receptor activation.",
+    "minDailyDose": "2.5 mg weekly",
+    "maxDailyDose": "6 mg weekly",
+    "maxWeeklyDose": "6 mg weekly",
+    "cycleLengthOn": "Minimum 8 weeks; evidence through 12–48 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "melanotan-i-afamelanotide",
@@ -1649,7 +2042,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ implant",
     "uses": "Erythropoietic protoporphyria; Photoprotection; Vitiligo research",
     "summary": "Synthetic alpha-MSH analog selectively targeting MC1R for melanogenesis, FDA-approved as Scenesse for erythropoietic protoporphyria photoprotection.",
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "melanotan-ii",
@@ -1676,7 +2075,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Non-selective melanocortin receptor agonist studied for skin pigmentation, sexual function, and appetite modulation through MC1R and MC4R activation.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Increase skin pigmentation (tanning) through melanocortin receptor activation.",
+    "minDailyDose": "250 mcg",
+    "maxDailyDose": "1,000 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "6–8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "melatonin",
@@ -1696,7 +2101,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "mgf-mechano-growth-factor",
@@ -1724,7 +2135,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Splice variant of IGF-1 produced in response to mechanical stress, studied for its role in activating muscle satellite cells and promoting tissue repair.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support tissue repair and regenerative processes through localized growth factor signaling.",
+    "minDailyDose": "100 mcg",
+    "maxDailyDose": "300 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "mk-677-ibutamoren",
@@ -1735,22 +2152,28 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "MK-0677",
       "Nutrobal"
     ],
-    "molecularType": "Small molecule",
+    "molecularType": null,
     "categoryTags": [
       "Muscle/performance"
     ],
     "fdaStatus": "Investigational",
-    "doseRange": "10-25 mg/day",
+    "doseRange": null,
     "normalizedHalfLifeHours": 24,
     "halfLifeDisplay": "~24 hours",
     "estimatedHalfLife": true,
     "evidenceGrade": "B",
-    "route": "Oral",
-    "uses": "GH elevation; Muscle mass; Bone density",
-    "summary": "Oral non-peptide ghrelin receptor agonist that elevates GH and IGF-1 levels for up to 24 hours without affecting cortisol levels.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "mots-c",
@@ -1777,7 +2200,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Mitochondrial-derived peptide encoded in the 12S rRNA that activates AMPK and regulates metabolic homeostasis and insulin sensitivity.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support metabolic homeostasis, enhance insulin sensitivity, and promote healthy aging through AMPK activation.",
+    "minDailyDose": "500 mcg",
+    "maxDailyDose": "1,500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "4–8 weeks on",
+    "cycleLengthOff": "4–8 weeks off"
   },
   {
     "id": "nad",
@@ -1803,7 +2232,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Essential coenzyme in redox metabolism studied for age-related decline, with supplementation aimed at restoring cellular NAD+ levels for mitochondrial and DNA repair function.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support cellular energy metabolism, DNA repair pathways, and mitochondrial function through exogenous NAD+ supplementation.",
+    "minDailyDose": "50 mg",
+    "maxDailyDose": "100 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "oxytocin",
@@ -1829,7 +2264,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ/Nasal",
     "uses": "Labor induction; Social bonding research; Postpartum hemorrhage",
     "summary": "Nine-amino acid neurohypophyseal hormone FDA-approved for labor induction and studied extensively for roles in social cognition, bonding, and stress response.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Explore oxytocin’s effects on social bonding, stress reduction, metabolic function, and pain modulation.",
+    "minDailyDose": "100 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "pe-22-28",
@@ -1853,7 +2294,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Heptapeptide analog of spadin that inhibits the TREK-1 potassium channel, studied as a potential rapid-onset antidepressant in preclinical models.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support rapid neuroplasticity, mood regulation, and neuroprotection through selective TREK-1 inhibition.",
+    "minDailyDose": "50 µg",
+    "maxDailyDose": "200 µg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "12–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "peg-mgf",
@@ -1880,7 +2327,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "PEGylated form of mechano growth factor with extended half-life allowing less frequent administration compared to standard MGF.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support muscle recovery and regeneration through MGF’s satellite cell activation and local growth factor signaling.",
+    "minDailyDose": "200 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "pinealon",
@@ -1900,12 +2353,18 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C",
-    "route": "SubQ/Oral",
+    "route": "SubQ",
     "uses": "Pineal gland regulation; Circadian rhythm; Neuroprotection",
     "summary": "Tripeptide bioregulator developed for pineal gland and central nervous system regulation, studied for circadian rhythm normalization and neuroprotection.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support neuroprotection, cognitive function, and cellular resilience in brain tissue through peptide bioregulation.",
+    "minDailyDose": "1.0 mg",
+    "maxDailyDose": "2.0 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "10–20 days",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "pnc-27",
@@ -1925,7 +2384,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": "Educational exploration of a p53‑derived peptide studied preclinically for selective cancer‑cell membrane disruption.",
+    "minDailyDose": "100 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "pt-141-bremelanotide",
@@ -1950,7 +2415,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ",
     "uses": "Hypoactive sexual desire; Sexual dysfunction; Melanocortin research",
     "summary": "Melanocortin-4 receptor agonist FDA-approved for premenopausal women with hypoactive sexual desire disorder, acting through central nervous system pathways.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Support sexual desire and arousal through central melanocortin receptor activation.",
+    "minDailyDose": "500 mcg",
+    "maxDailyDose": "1,500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "relaxation-pm",
@@ -1970,7 +2441,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "retatrutide",
@@ -1996,7 +2473,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Triple hormone receptor agonist (GIP/GLP-1/glucagon) in late-stage clinical trials showing significant weight reduction potential.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Support significant weight reduction and metabolic improvements through triple-receptor activation.",
+    "minDailyDose": "2 mg weekly",
+    "maxDailyDose": "12 mg weekly",
+    "maxWeeklyDose": "12 mg weekly",
+    "cycleLengthOn": "Minimum 24 weeks; trials through 48 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "retatrutide-cagrilintide",
@@ -2016,7 +2499,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": "Support satiety, reduce food intake, and promote weight management over time.",
+    "minDailyDose": "0.6 mg weekly",
+    "maxDailyDose": "4.5 mg weekly",
+    "maxWeeklyDose": "4.5 mg weekly",
+    "cycleLengthOn": "12–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "retatrutide-tirzepatide",
@@ -2036,7 +2525,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": "Support significant weight reduction and metabolic improvements through triple-receptor activation.",
+    "minDailyDose": "2 mg weekly",
+    "maxDailyDose": "12 mg weekly",
+    "maxWeeklyDose": "12 mg weekly",
+    "cycleLengthOn": "Minimum 24 weeks; trials through 48 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "selank",
@@ -2062,7 +2557,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Synthetic analog of the immunomodulatory peptide tuftsin with anxiolytic and nootropic properties, approved in Russia for anxiety and neurasthenia.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Intranasal anxiolytic and cognitive research",
+    "minDailyDose": "2.7 mg",
+    "maxDailyDose": "0.2 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "14-day manufacturer course; protocol page is calculation-focused",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "semaglutide",
@@ -2083,10 +2584,16 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~7 days",
     "estimatedHalfLife": true,
     "evidenceGrade": "A",
-    "route": "SubQ/Oral",
+    "route": "SubQ",
     "uses": "Weight management; Type 2 diabetes; Cardiovascular risk reduction",
     "summary": "GLP-1 receptor agonist with strong clinical evidence for weight loss and glycemic control in type 2 diabetes.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Support chronic weight management through GLP-1 receptor activation, leading to reduced appetite and improved metabolic parameters.",
+    "minDailyDose": "0.25 mg weekly",
+    "maxDailyDose": "2.4 mg weekly",
+    "maxWeeklyDose": "2.4 mg weekly",
+    "cycleLengthOn": "16–20+ weeks with gradual escalation",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "semax",
@@ -2112,7 +2619,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Synthetic analog of ACTH(4-10) approved in Russia for cognitive and neurological conditions, studied for BDNF upregulation and neuroprotective properties.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Intranasal cognitive and neuroprotective research",
+    "minDailyDose": "0.25 mg",
+    "maxDailyDose": "1 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "No repeated cycle stated; protocol page is calculation-focused",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "sermorelin",
@@ -2136,7 +2649,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ",
     "uses": "GH stimulation; Pediatric GH deficiency; Anti-aging",
     "summary": "GHRH analog consisting of the first 29 amino acids of endogenous GHRH, previously FDA-approved for diagnostic use in GH deficiency.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Stimulate endogenous pituitary GH release to support physiologic IGF‑1 levels and anabolic processes.",
+    "minDailyDose": "200 µg",
+    "maxDailyDose": "500 µg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "3–6 months",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "slu-pp-332",
@@ -2155,12 +2674,18 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C",
-    "route": "Oral",
+    "route": "SubQ",
     "uses": "Exercise mimetic; ERR activation; Metabolic research",
     "summary": "Estrogen-related receptor (ERR) agonist studied as an exercise mimetic that activates endurance and fatigue-resistance pathways without physical exercise.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Preclinical exercise-mimetic and metabolic research",
+    "minDailyDose": "1,250 mcg",
+    "maxDailyDose": "2,500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "snap-8",
@@ -2185,7 +2710,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Extended version of Argireline (8 amino acids vs 6) that inhibits SNARE complex formation with reportedly enhanced efficacy for reducing expression wrinkles.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Topical cosmetic formulation research",
+    "minDailyDose": "0.0015 %",
+    "maxDailyDose": "0.005 %",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "Twice daily for 28 days in manufacturer testing; other study schedules vary",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "ss-31-elamipretide",
@@ -2211,7 +2742,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Cell-permeable tetrapeptide that concentrates at the inner mitochondrial membrane to stabilize cardiolipin and improve mitochondrial function.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Support mitochondrial function, enhance ATP production, and reduce oxidative stress in tissues with high metabolic demand.",
+    "minDailyDose": "5 mg",
+    "maxDailyDose": "10 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "superhuman-blend",
@@ -2231,7 +2768,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "survodutide",
@@ -2257,7 +2800,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "Dual GLP-1 and glucagon receptor agonist in Phase 3 trials for obesity and metabolic liver disease.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": "Support metabolic improvement and weight management through dual GLP‑1/glucagon receptor activation.",
+    "minDailyDose": "0.6 mg weekly",
+    "maxDailyDose": "6 mg weekly",
+    "maxWeeklyDose": "6 mg weekly",
+    "cycleLengthOn": "12–16 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "tb-500-thymosin-beta-4",
@@ -2285,7 +2834,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "43-amino acid peptide involved in cell migration, blood vessel formation, and tissue repair, studied for accelerating wound and cardiac tissue recovery.",
     "warnings": [
       "Research"
-    ]
+    ],
+    "goal": "Support tissue repair, wound healing, and angiogenesis through the active thymosin beta‑4 fragment mechanism.",
+    "minDailyDose": "500 mcg",
+    "maxDailyDose": "1,000 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "tesamorelin",
@@ -2308,7 +2863,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ",
     "uses": "HIV lipodystrophy; Visceral fat reduction; GH stimulation",
     "summary": "Stabilized GHRH analog FDA-approved for reducing excess abdominal fat in HIV-infected patients with lipodystrophy.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Reduce visceral adipose tissue and improve lipid profiles through sustained GH/IGF-1 elevation.",
+    "minDailyDose": "1 mg",
+    "maxDailyDose": "2 mg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "12–26 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "thymalin",
@@ -2317,24 +2878,30 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "alternateNames": [
       "Thymus extract peptide"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "Longevity",
       "Immune support"
     ],
     "fdaStatus": "Research",
-    "doseRange": "10 mg/day for 5-10 days",
+    "doseRange": null,
     "normalizedHalfLifeHours": 3,
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C+",
-    "route": "SubQ/IM",
-    "uses": "Immune restoration; Thymus function; Longevity research",
-    "summary": "Thymic peptide bioregulator used in Russian gerontology research for immune system restoration and studied alongside epithalon for lifespan extension.",
+    "route": null,
+    "uses": null,
+    "summary": null,
     "warnings": [
       "Thymic peptide bioregulator used in Russian gerontology research for immune system restoration and studied alongside epithalon for lifespan extension.",
       "Research"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "thymosin-alpha-1",
@@ -2358,7 +2925,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ",
     "uses": "Immune enhancement; Hepatitis B/C; Adjunct to vaccines",
     "summary": "28-amino acid thymic peptide approved in over 30 countries for immune modulation, studied extensively for chronic viral hepatitis and as a vaccine adjuvant.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Support immune modulation and enhance host defense mechanisms.",
+    "minDailyDose": "300 mcg",
+    "maxDailyDose": "500 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "tirzepatide",
@@ -2383,7 +2956,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": "SubQ",
     "uses": "Weight management; Type 2 diabetes; Metabolic syndrome",
     "summary": "Dual GIP and GLP-1 receptor agonist demonstrating superior weight reduction outcomes compared to single-agonist therapies.",
-    "warnings": []
+    "warnings": [],
+    "goal": "Support glycemic control, weight management, and metabolic health through dual incretin receptor activation.",
+    "minDailyDose": "2.5 mg weekly",
+    "maxDailyDose": "15 mg weekly",
+    "maxWeeklyDose": "15 mg weekly",
+    "cycleLengthOn": "12–16+ weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "triptorelin",
@@ -2394,21 +2973,27 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
       "Decapeptyl",
       "GnRH agonist"
     ],
-    "molecularType": "Peptide",
+    "molecularType": null,
     "categoryTags": [
       "Healing",
       "Sexual health"
     ],
     "fdaStatus": "Approved",
-    "doseRange": "3.75 mg/month or depot",
+    "doseRange": null,
     "normalizedHalfLifeHours": 3,
     "halfLifeDisplay": "~3 hours (peptide); depot weeks",
     "estimatedHalfLife": true,
     "evidenceGrade": "A",
-    "route": "SubQ/IM",
-    "uses": "Prostate cancer; Endometriosis; Precocious puberty",
-    "summary": "Potent GnRH agonist that initially stimulates then suppresses gonadotropin release, FDA-approved for advanced prostate cancer and other hormone-dependent conditions.",
-    "warnings": []
+    "route": null,
+    "uses": null,
+    "summary": null,
+    "warnings": [],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   },
   {
     "id": "vesugen",
@@ -2428,7 +3013,13 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "route": null,
     "uses": null,
     "summary": null,
-    "warnings": []
+    "warnings": [],
+    "goal": "Support vascular endothelial function and cellular renewal over time.",
+    "minDailyDose": "500 mcg",
+    "maxDailyDose": "2,000 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "8–12 weeks",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "vilon",
@@ -2448,13 +3039,19 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "halfLifeDisplay": "~hours (estimated 2-4 hours)",
     "estimatedHalfLife": true,
     "evidenceGrade": "C",
-    "route": "SubQ/Oral",
+    "route": "SubQ",
     "uses": "Immune bioregulation; Thymic function; Longevity",
     "summary": "Dipeptide bioregulator (Lys-Glu) studied for immune system regulation and thymic function support in gerontological research.",
     "warnings": [
       "Dipeptide bioregulator (Lys-Glu) studied for immune system regulation and thymic function support in gerontological research.",
       "Research"
-    ]
+    ],
+    "goal": "Support immune modulation and thymic function markers based on preclinical observations.",
+    "minDailyDose": "67 mcg",
+    "maxDailyDose": "667 mcg",
+    "maxWeeklyDose": "Not stated",
+    "cycleLengthOn": "5 days on",
+    "cycleLengthOff": "Not stated"
   },
   {
     "id": "vip-vasoactive-intestinal-peptide",
@@ -2480,6 +3077,12 @@ export const PEPTIDE_CATALOG: PeptideCatalogItem[] = [
     "summary": "28-amino acid neuropeptide with vasodilatory, anti-inflammatory, and immunomodulatory properties, studied for ARDS and pulmonary conditions.",
     "warnings": [
       "Investigational"
-    ]
+    ],
+    "goal": null,
+    "minDailyDose": null,
+    "maxDailyDose": null,
+    "maxWeeklyDose": null,
+    "cycleLengthOn": null,
+    "cycleLengthOff": null
   }
 ];

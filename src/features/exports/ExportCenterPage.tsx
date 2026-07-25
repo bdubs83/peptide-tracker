@@ -788,11 +788,11 @@ export const ExportCenterPage: React.FC = () => {
       return [
         {
           title: "Vault Stock Items",
-          headers: ["Item", "Amount", "Supplier", "Ordered", "Received", "Manufacturer", "COA", "Storage / Notes"],
+          headers: ["Item", "Purchase / Remaining", "Supplier", "Ordered", "Received", "Manufacturer", "COA", "Storage / Notes"],
           columnWeights: [1.6, 1, 1, 0.9, 0.9, 0.9, 0.7, 2],
           rows: filteredStockItems.map((stock) => [
             `${stock.name}\nBatch ${stock.batchNumber || "--"}`,
-            `${stock.numberOfVials || "--"} vial(s), ${stock.mgPerVial || "--"} mg/vial`,
+            `${stock.purchasedVialCount || "--"} purchased, ${stock.numberOfVials || "--"} remaining, ${stock.mgPerVial || "--"} mg/vial, price ${stock.price || "--"}`,
             stock.supplier || "--",
             formatDate(stock.orderedDate),
             stock.receivedDate ? formatDate(stock.receivedDate) : "Not received",
@@ -1118,12 +1118,14 @@ export const ExportCenterPage: React.FC = () => {
   const handleDownloadVaultStockCsv = () => {
     handleDownloadCsv(
       "Vault Stock",
-      ["Item", "Batch", "Vials", "Mg Per Vial", "Supplier", "Ordered", "Received", "Manufacturer", "Stored", "COA", "Notes"],
+      ["Item", "Batch", "Purchased Vials", "Remaining Vials", "Mg Per Vial", "Total Price", "Supplier", "Ordered", "Received", "Manufacturer", "Stored", "COA", "Notes"],
       filteredStockItems.map((stock) => [
         stock.name,
         stock.batchNumber || "",
+        stock.purchasedVialCount || "",
         stock.numberOfVials || "",
         stock.mgPerVial || "",
+        stock.price || "",
         stock.supplier || "",
         stock.orderedDate || "",
         stock.receivedDate || "",
@@ -1186,13 +1188,13 @@ export const ExportCenterPage: React.FC = () => {
       return (
         <ReportSection title="Vault Stock">
           <ReportTable
-            headers={["Item", "Amount", "Supplier", "Ordered", "Received", "Manufacturer", "COA", "Storage / Notes"]}
+            headers={["Item", "Purchase / Remaining", "Supplier", "Ordered", "Received", "Manufacturer", "COA", "Storage / Notes"]}
             rows={filteredStockItems.map((stock: StockItem) => [
               <>
                 <strong>{stock.name}</strong>
                 <div style={{ color: "var(--text-secondary)" }}>Batch {stock.batchNumber || "--"}</div>
               </>,
-              `${stock.numberOfVials || "--"} vial(s), ${stock.mgPerVial || "--"} mg/vial`,
+              `${stock.purchasedVialCount || "--"} purchased, ${stock.numberOfVials || "--"} remaining, ${stock.mgPerVial || "--"} mg/vial, price ${stock.price || "--"}`,
               stock.supplier || "--",
               formatDate(stock.orderedDate),
               stock.receivedDate ? formatDate(stock.receivedDate) : "Not received",

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Bell, CalendarClock, ChevronDown, ChevronUp } from "lucide-react";
 import { db } from "../../db/db";
@@ -17,7 +17,14 @@ import {
   type DeviceReminderLead,
   type SecondaryDeviceReminderLead,
 } from "./reminderUtils";
-import { getDeviceNotificationPermission, showDeviceNotification, type DeviceNotificationPermission } from "./deviceNotifications";
+import {
+  getDeviceNotificationPermission,
+  isNativeNotificationPlatform,
+  replaceNativeReminderSchedule,
+  showDeviceNotification,
+  type DeviceNotificationPermission,
+  type NativeReminderPlan,
+} from "./deviceNotifications";
 import type { DayEvent } from "../calendar/calendarUtils";
 import { DEFAULT_VAULT_USER_ID } from "../../types/vaultUser";
 import type { Peptide } from "../../types/peptide";
@@ -106,13 +113,15 @@ const eventStatusLabel = (event: DayEvent, date: string, today: string, leadDate
 
 export const ReminderCenter: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const settings = useLiveQuery(() => db.appSettings.toArray());
   const peptides = useLiveQuery(async () => activeRecords(await db.peptides.toArray()));
   const schedules = useLiveQuery(async () => activeRecords(await db.schedules.toArray()));
   const logs = useLiveQuery(async () => activeRecords(await db.injectionLogs.toArray()));
   const vaultUsers = useLiveQuery(async () => activeRecords(await db.vaultUsers.orderBy("sortOrder").toArray()));
-  const [isCollapsed, setIsCollapsed] = React.useState(false);
+  const [collapsedOverride, setCollapsedOverride] = React.useState<boolean>();
   const [now, setNow] = React.useState(new Date());
+  const [nativeScheduleRevision, setNativeScheduleRevision] = React.useState(0);
   const [notificationPermission, setNotificationPermission] = React.useState<DeviceNotificationPermission>("default");
 
   useEffect(() => {
@@ -125,18 +134,23 @@ export const ReminderCenter: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const collapsedSetting = settings?.find((item) => item.key === reminderCenterCollapsedKey);
-    if (typeof collapsedSetting?.value === "boolean") {
-      setIsCollapsed(collapsedSetting.value);
-    }
-  }, [settings]);
+    if (!isNativeNotificationPlatform()) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        setNativeScheduleRevision((revision) => revision + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => document.removeEventListener("visibilitychange", refreshWhenVisible);
+  }, []);
+
+  const storedCollapsed = settings?.find((item) => item.key === reminderCenterCollapsedKey)?.value;
+  const isCollapsed = collapsedOverride ?? (typeof storedCollapsed === "boolean" ? storedCollapsed : false);
 
   const toggleCollapsed = () => {
-    setIsCollapsed((collapsed) => {
-      const nextValue = !collapsed;
-      void putAppSetting(reminderCenterCollapsedKey, nextValue);
-      return nextValue;
-    });
+    const nextValue = !isCollapsed;
+    setCollapsedOverride(nextValue);
+    void putAppSetting(reminderCenterCollapsedKey, nextValue);
   };
 
   const preferences = resolveReminderPreferences(settings);
@@ -163,6 +177,10 @@ export const ReminderCenter: React.FC = () => {
     if (!peptides || !schedules || !logs) return [];
     return getReminderRowsForRange(today, addDays(today, 1), peptides, schedules, logs);
   }, [logs, peptides, schedules, today]);
+  const nativeDeviceRows = useMemo(() => {
+    if (!peptides || !schedules || !logs) return [];
+    return getReminderRowsForRange(today, addDays(today, 30), peptides, schedules, logs);
+  }, [logs, peptides, schedules, today]);
 
   useEffect(() => {
     let isMounted = true;
@@ -180,6 +198,47 @@ export const ReminderCenter: React.FC = () => {
   }, [preferences.deviceEnabled]);
 
   useEffect(() => {
+    if (!isNativeNotificationPlatform()) return;
+
+    const deviceLeads = [preferences.devicePrimaryLead, preferences.deviceSecondaryLead].filter(
+      (lead, index, list): lead is DeviceReminderLead | Exclude<SecondaryDeviceReminderLead, "none"> =>
+        lead !== "none" && list.indexOf(lead) === index
+    );
+    const plans: NativeReminderPlan[] = [];
+
+    if (preferences.deviceEnabled && notificationPermission === "granted") {
+      nativeDeviceRows.forEach(({ event, date }) => {
+        if (event.status === "missed") return;
+
+        deviceLeads.forEach((lead) => {
+          const scheduledAt = buildScheduledDateTime(date, event.schedule?.injectionTime);
+          const reminderAt = new Date(scheduledAt.getTime() - getReminderLeadMinutes(lead) * 60 * 1000);
+          const leadLabel = lead === "atTime" ? "at injection time" : `${getReminderLeadMinutes(lead)} minutes before`;
+          const body = `${getUserName(event)}: ${event.peptide.name} ${leadLabel}, scheduled for ${eventTimeLabel(event)}.`;
+
+          plans.push({
+            key: `${event.peptide.id}:${event.schedule?.id || "schedule"}:${date}:${lead}`,
+            title: "Injection reminder",
+            body,
+            at: reminderAt,
+          });
+        });
+      });
+    }
+
+    void replaceNativeReminderSchedule(plans).catch(() => undefined);
+  }, [
+    getUserName,
+    nativeDeviceRows,
+    nativeScheduleRevision,
+    notificationPermission,
+    preferences.deviceEnabled,
+    preferences.devicePrimaryLead,
+    preferences.deviceSecondaryLead,
+  ]);
+
+  useEffect(() => {
+    if (isNativeNotificationPlatform()) return;
     if (
       !preferences.deviceEnabled ||
       notificationPermission !== "granted" ||
@@ -221,7 +280,7 @@ export const ReminderCenter: React.FC = () => {
     today,
   ]);
 
-  if (!preferences.inAppEnabled || reminderEvents.length === 0) return null;
+  if (location.pathname === "/health" || !preferences.inAppEnabled || reminderEvents.length === 0) return null;
 
   return (
     <Card

@@ -74,6 +74,33 @@ describe("calendarUtils", () => {
     expect(dayEvents[0].log?.id).toBe("taken");
   });
 
+  it("does not let an ad-hoc injection fulfill a scheduled dose on the same date", () => {
+    const logs: InjectionLog[] = [
+      {
+        id: "ad-hoc",
+        peptideId: "p1",
+        peptideNameSnapshot: "Retatrutide",
+        scheduledDate: "2026-06-16",
+        actualDateTime: "2026-06-16T13:00:00.000Z",
+        doseValue: 0.5,
+        doseUnit: "mg",
+        drawMl: 0.1,
+        drawUnits: 10,
+        status: "taken",
+        entryType: "adHoc",
+        createdAt: "2026-06-16T13:00:00.000Z",
+        updatedAt: "2026-06-16T13:00:00.000Z",
+      },
+    ];
+
+    const events = getEventsForDateRange("2026-06-16", "2026-06-16", [peptide], [schedule], logs);
+    const dayEvents = events.get("2026-06-16") || [];
+
+    expect(dayEvents).toHaveLength(1);
+    expect(dayEvents[0].status).toBe("missed");
+    expect(dayEvents[0].log).toBeUndefined();
+  });
+
   it("ignores stale scheduled placeholders when the current dose schedule no longer includes that date", () => {
     const sundayWednesdaySchedule: PeptideSchedule = {
       id: "s1",

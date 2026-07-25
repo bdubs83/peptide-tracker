@@ -1,14 +1,12 @@
 import React from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { Activity, Calculator, Scale } from "lucide-react";
+import { Activity, Calculator } from "lucide-react";
 import { CalculatorPage } from "../calculator/CalculatorPage";
-import { ProfilePage } from "../vault/ProfilePage";
 import { MultiHalfLifeTool } from "./MultiHalfLifeTool";
 
 const tools = [
   { path: "calculator", label: "Calculator", Icon: Calculator },
   { path: "half-life", label: "Half-Life", Icon: Activity },
-  { path: "body-tracker", label: "Body Tracker", Icon: Scale },
 ];
 
 export const ToolsPage: React.FC = () => {
@@ -30,7 +28,7 @@ export const ToolsPage: React.FC = () => {
           top: "0",
           zIndex: 20,
           display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
           gap: "6px",
           marginBottom: "16px",
           padding: "8px",
@@ -70,7 +68,6 @@ export const ToolsPage: React.FC = () => {
         <Route index element={<Navigate to="calculator" replace />} />
         <Route path="calculator" element={<CalculatorPage />} />
         <Route path="half-life" element={<MultiHalfLifeTool />} />
-        <Route path="body-tracker" element={<ProfilePage mode="bodyTracker" />} />
         <Route path="*" element={<Navigate to="calculator" replace />} />
       </Routes>
     </div>

@@ -117,7 +117,42 @@ const statusLabel = (status: DayEvent["status"]) => {
   return status;
 };
 
-const getEventTime = (event: DayEvent) => event.schedule?.injectionTime || "09:00";
+const getEventTime = (event: DayEvent) => {
+  if (event.log?.actualDateTime) {
+    const recordedAt = new Date(event.log.actualDateTime);
+    if (!Number.isNaN(recordedAt.getTime())) {
+      return `${String(recordedAt.getHours()).padStart(2, "0")}:${String(recordedAt.getMinutes()).padStart(2, "0")}`;
+    }
+  }
+
+  return event.schedule?.injectionTime || "09:00";
+};
+
+const getEventDose = (event: DayEvent, date: string) => {
+  if (event.log && (event.log.status === "taken" || event.log.status === "manual")) {
+    return {
+      doseValue: event.log.doseValue,
+      doseUnit: event.log.doseUnit,
+      drawMl: event.log.drawMl,
+      drawUnits: event.log.drawUnits,
+    };
+  }
+
+  const scheduledDose = event.schedule
+    ? getScheduledDoseForDate(event.peptide, event.schedule, date)
+    : {
+        doseValue: event.peptide.desiredDoseValue,
+        doseUnit: event.peptide.desiredDoseUnit,
+      };
+  const scheduledDraw = getDrawForDose(
+    scheduledDose.doseValue,
+    scheduledDose.doseUnit,
+    event.peptide.concentrationMcgPerMl,
+    event.peptide.unitsPerMl
+  );
+
+  return { ...scheduledDose, ...scheduledDraw };
+};
 
 const getEventTimeMinutes = (event: DayEvent) => {
   const [hours, minutes] = getEventTime(event).split(":").map(Number);
@@ -189,24 +224,13 @@ const buildGoogleCalendarExportEvents = (
     );
 
     for (const event of events) {
-      const scheduledDose = event.schedule
-        ? getScheduledDoseForDate(event.peptide, event.schedule, cursor)
-        : {
-            doseValue: event.peptide.desiredDoseValue,
-            doseUnit: event.peptide.desiredDoseUnit,
-          };
-      const scheduledDraw = getDrawForDose(
-        scheduledDose.doseValue,
-        scheduledDose.doseUnit,
-        event.peptide.concentrationMcgPerMl,
-        event.peptide.unitsPerMl
-      );
+      const eventDose = getEventDose(event, cursor);
       const baseEvent = {
         date: cursor,
-        time: event.schedule?.injectionTime || "09:00",
+        time: getEventTime(event),
         peptideName: event.peptide.name,
-        doseLabel: formatDose(scheduledDose.doseValue, scheduledDose.doseUnit),
-        drawLabel: `${formatMl(scheduledDraw.drawMl)} / ${formatUnits(scheduledDraw.drawUnits)}`,
+        doseLabel: formatDose(eventDose.doseValue, eventDose.doseUnit),
+        drawLabel: `${formatMl(eventDose.drawMl)} / ${formatUnits(eventDose.drawUnits)}`,
         status: event.status,
       };
       exportEvents.push({
@@ -445,8 +469,8 @@ export const CalendarPage: React.FC = () => {
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
   const [googleSyncMessage, setGoogleSyncMessage] = useState("");
   const [isGoogleCalendarOpen, setIsGoogleCalendarOpen] = useState(false);
-  const [isCalendarRepairOpen, setIsCalendarRepairOpen] = useState(true);
-  const [isDueSummaryOpen, setIsDueSummaryOpen] = useState(true);
+  const [calendarRepairOpenOverride, setCalendarRepairOpenOverride] = useState<boolean>();
+  const [dueSummaryOpenOverride, setDueSummaryOpenOverride] = useState<boolean>();
   const [isRepairingCalendar, setIsRepairingCalendar] = useState(false);
   const [isRepairingPastCalendar, setIsRepairingPastCalendar] = useState(false);
   const [calendarRepairMessage, setCalendarRepairMessage] = useState("");
@@ -480,33 +504,24 @@ export const CalendarPage: React.FC = () => {
     void ensureDefaultVaultUser();
   }, []);
 
-  useEffect(() => {
-    const repairOpenSetting = settings?.find((setting) => setting.key === calendarRepairOpenKey);
-    const dueSummaryOpenSetting = settings?.find((setting) => setting.key === calendarDueSummaryOpenKey);
-
-    if (typeof repairOpenSetting?.value === "boolean") {
-      setIsCalendarRepairOpen(repairOpenSetting.value);
-    }
-
-    if (typeof dueSummaryOpenSetting?.value === "boolean") {
-      setIsDueSummaryOpen(dueSummaryOpenSetting.value);
-    }
-  }, [settings]);
+  const storedCalendarRepairOpen = settings?.find((setting) => setting.key === calendarRepairOpenKey)?.value;
+  const storedDueSummaryOpen = settings?.find((setting) => setting.key === calendarDueSummaryOpenKey)?.value;
+  const isCalendarRepairOpen =
+    calendarRepairOpenOverride ??
+    (typeof storedCalendarRepairOpen === "boolean" ? storedCalendarRepairOpen : true);
+  const isDueSummaryOpen =
+    dueSummaryOpenOverride ?? (typeof storedDueSummaryOpen === "boolean" ? storedDueSummaryOpen : true);
 
   const toggleCalendarRepairOpen = () => {
-    setIsCalendarRepairOpen((open) => {
-      const nextValue = !open;
-      void putAppSetting(calendarRepairOpenKey, nextValue);
-      return nextValue;
-    });
+    const nextValue = !isCalendarRepairOpen;
+    setCalendarRepairOpenOverride(nextValue);
+    void putAppSetting(calendarRepairOpenKey, nextValue);
   };
 
   const toggleDueSummaryOpen = () => {
-    setIsDueSummaryOpen((open) => {
-      const nextValue = !open;
-      void putAppSetting(calendarDueSummaryOpenKey, nextValue);
-      return nextValue;
-    });
+    const nextValue = !isDueSummaryOpen;
+    setDueSummaryOpenOverride(nextValue);
+    void putAppSetting(calendarDueSummaryOpenKey, nextValue);
   };
 
   useEffect(() => {
@@ -1104,18 +1119,7 @@ export const CalendarPage: React.FC = () => {
                     <div style={{ display: "grid", gap: "6px", marginTop: "9px", color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.45 }}>
                       {dueTodayRows.map((event) => {
                         const user = userById.get(event.peptide.vaultUserId || DEFAULT_VAULT_USER_ID);
-                        const scheduledDose = event.schedule
-                          ? getScheduledDoseForDate(event.peptide, event.schedule, today)
-                          : {
-                              doseValue: event.peptide.desiredDoseValue,
-                              doseUnit: event.peptide.desiredDoseUnit,
-                            };
-                        const scheduledDraw = getDrawForDose(
-                          scheduledDose.doseValue,
-                          scheduledDose.doseUnit,
-                          event.peptide.concentrationMcgPerMl,
-                          event.peptide.unitsPerMl
-                        );
+                        const eventDose = getEventDose(event, today);
 
                         return (
                           <div
@@ -1131,7 +1135,7 @@ export const CalendarPage: React.FC = () => {
                             }}
                           >
                             <span style={{ color: "var(--text-primary)", fontWeight: 800 }}>
-                              {user?.displayName || "User 1"} - {getEventTime(event)} - {event.peptide.name} - {formatDose(scheduledDose.doseValue, scheduledDose.doseUnit)} - {formatUnits(scheduledDraw.drawUnits)}
+                              {user?.displayName || "User 1"} - {getEventTime(event)} - {event.peptide.name} - {formatDose(eventDose.doseValue, eventDose.doseUnit)} - {formatUnits(eventDose.drawUnits)}
                             </span>
                           </div>
                         );
@@ -1492,18 +1496,7 @@ export const CalendarPage: React.FC = () => {
                   <h4 style={{ fontSize: "0.95rem", margin: 0 }}>{user?.displayName || "User 1"}</h4>
                 </div>
                 {userEvents.map((event) => {
-            const scheduledDose = event.schedule
-              ? getScheduledDoseForDate(event.peptide, event.schedule, selectedDate)
-              : {
-                  doseValue: event.peptide.desiredDoseValue,
-                  doseUnit: event.peptide.desiredDoseUnit,
-                };
-            const scheduledDraw = getDrawForDose(
-              scheduledDose.doseValue,
-              scheduledDose.doseUnit,
-              event.peptide.concentrationMcgPerMl,
-              event.peptide.unitsPerMl
-            );
+            const eventDose = getEventDose(event, selectedDate);
             return (
               <Card key={event.peptide.id}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -1522,11 +1515,11 @@ export const CalendarPage: React.FC = () => {
                       {event.peptide.name}
                     </h4>
                     <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "2px" }}>
-                      Dose: {formatDose(scheduledDose.doseValue, scheduledDose.doseUnit)}
+                      Dose: {formatDose(eventDose.doseValue, eventDose.doseUnit)}
                       {" • "}
-                      Draw: {formatMl(scheduledDraw.drawMl)} / {formatUnits(scheduledDraw.drawUnits)}
+                      Draw: {formatMl(eventDose.drawMl)} / {formatUnits(eventDose.drawUnits)}
                       {" • "}
-                      Time: {event.schedule?.injectionTime || "09:00"}
+                      Time: {getEventTime(event)}
                     </p>
                   </div>
 
@@ -1540,7 +1533,7 @@ export const CalendarPage: React.FC = () => {
                 </div>
 
                 <SyringeVisualizer
-                  drawMl={scheduledDraw.drawMl}
+                  drawMl={eventDose.drawMl}
                   syringeSizeMl={event.peptide.syringeSizeMl}
                   unitsPerMl={event.peptide.unitsPerMl}
                   displayMode={syringeDisplayMode}

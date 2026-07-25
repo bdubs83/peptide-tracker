@@ -172,9 +172,7 @@ export function getEventsForDay(
 
   peptides.forEach((peptide) => {
     const schedule = scheduleByPeptideId.get(peptide.id);
-    const log = getBestLogForDate(
-      logs.filter((l) => l.peptideId === peptide.id && l.scheduledDate === dateStr)
-    );
+    const logsForDate = logs.filter((l) => l.peptideId === peptide.id && l.scheduledDate === dateStr);
 
     const scheduled = schedule
       ? hasDoseSchedule(schedule)
@@ -183,6 +181,9 @@ export function getEventsForDay(
           )
         : isScheduledDate(schedule, dateStr)
       : false;
+
+    // A one-off injection does not fulfill a planned occurrence on the same day.
+    const log = getBestLogForDate(scheduled ? logsForDate.filter((l) => l.entryType !== "adHoc") : logsForDate);
 
     const status = getStatusForDate(dateStr, todayStr, scheduled, log);
 
@@ -212,22 +213,6 @@ export function getEventsForDateRange(
   const todayStr = getLocalDateString();
   const dates = getDateRange(startDateStr, endDateStr);
   const scheduleByPeptideId = makePreferredScheduleMap(schedules);
-  const logsByPeptideDate = new Map<string, InjectionLog>();
-
-  for (const log of logs) {
-    if (log.scheduledDate < startDateStr || log.scheduledDate > endDateStr) continue;
-    const key = `${log.peptideId}|${log.scheduledDate}`;
-    const existing = logsByPeptideDate.get(key);
-    const priorityDiff = existing ? getLogStatusPriority(log) - getLogStatusPriority(existing) : 1;
-    const isNewerTie =
-      existing &&
-      priorityDiff === 0 &&
-      (log.updatedAt || log.createdAt || "") > (existing.updatedAt || existing.createdAt || "");
-    if (!existing || priorityDiff > 0 || isNewerTie) {
-      logsByPeptideDate.set(key, log);
-    }
-  }
-
   for (const peptide of peptides) {
     const schedule = scheduleByPeptideId.get(peptide.id);
     const scheduledDates = new Set<string>();
@@ -255,8 +240,11 @@ export function getEventsForDateRange(
     }
 
     for (const dateStr of dates) {
-      const log = logsByPeptideDate.get(`${peptide.id}|${dateStr}`);
       const scheduled = scheduledDates.has(dateStr);
+      const logsForDate = logs.filter((log) => log.peptideId === peptide.id && log.scheduledDate === dateStr);
+      const log = getBestLogForDate(
+        scheduled ? logsForDate.filter((candidate) => candidate.entryType !== "adHoc") : logsForDate
+      );
       const status = getStatusForDate(dateStr, todayStr, scheduled, log);
       if (status === "none") continue;
 

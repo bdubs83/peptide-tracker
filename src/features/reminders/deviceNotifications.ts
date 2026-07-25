@@ -2,10 +2,19 @@ import { Capacitor } from "@capacitor/core";
 import { LocalNotifications, type PermissionStatus } from "@capacitor/local-notifications";
 
 export type DeviceNotificationPermission = "unsupported" | "default" | "granted" | "denied";
+export type NativeReminderPlan = {
+  key: string;
+  title: string;
+  body: string;
+  at: Date;
+};
 
 const reminderChannelId = "injection-reminders";
+const scheduledReminderSource = "inner-circle-scheduled-reminder";
+const maxPendingNativeReminders = 60;
 
 const isNativeApp = () => Capacitor.isNativePlatform();
+export const isNativeNotificationPlatform = isNativeApp;
 
 const mapNativePermission = (permission: PermissionStatus["display"]): DeviceNotificationPermission => {
   if (permission === "granted") return "granted";
@@ -61,6 +70,58 @@ const ensureNativeReminderChannel = async () => {
     });
   } catch {
     // Channel creation is best-effort; default native notification behavior still works.
+  }
+};
+
+const stableNotificationId = (key: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return 1_000_000_000 + ((hash >>> 0) % 1_000_000_000);
+};
+
+export const replaceNativeReminderSchedule = async (plans: NativeReminderPlan[]) => {
+  if (!isNativeApp()) return;
+
+  const pending = await LocalNotifications.getPending();
+  const ownedNotifications = pending.notifications
+    .filter((notification) => notification.extra?.source === scheduledReminderSource)
+    .map(({ id }) => ({ id }));
+
+  if (ownedNotifications.length > 0) {
+    await LocalNotifications.cancel({ notifications: ownedNotifications });
+  }
+
+  const permission = await getDeviceNotificationPermission();
+  if (permission !== "granted" || plans.length === 0) return;
+
+  await ensureNativeReminderChannel();
+  const now = Date.now();
+  const notifications = plans
+    .filter((plan) => plan.at.getTime() > now)
+    .sort((left, right) => left.at.getTime() - right.at.getTime())
+    .slice(0, maxPendingNativeReminders)
+    .map((plan) => ({
+      id: stableNotificationId(plan.key),
+      title: plan.title,
+      body: plan.body,
+      largeBody: plan.body,
+      channelId: reminderChannelId,
+      autoCancel: true,
+      schedule: {
+        at: plan.at,
+        allowWhileIdle: true,
+      },
+      extra: {
+        source: scheduledReminderSource,
+        key: plan.key,
+      },
+    }));
+
+  if (notifications.length > 0) {
+    await LocalNotifications.schedule({ notifications });
   }
 };
 

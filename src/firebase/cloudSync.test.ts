@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InjectionLog } from "../types/injectionLog";
+import type { HealthLog } from "../types/healthLog";
 
 const loadCloudSyncModule = async () => {
   vi.resetModules();
@@ -65,6 +66,27 @@ describe("cloud sync", () => {
     });
   });
 
+  it("includes stored Health Tracker summaries in cloud-sync counts", async () => {
+    const { getLocalDataCounts } = await loadCloudSyncModule();
+    const { db } = await import("../db/db");
+    const now = "2026-07-13T12:00:00.000Z";
+    const dailySteps: HealthLog = {
+      id: "healthconnect:steps:daily:2026-07-13:steps",
+      metric: "steps",
+      startTime: now,
+      value: 5432,
+      unit: "count",
+      source: "healthConnect",
+      sourceRecordId: "daily:2026-07-13:steps",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.healthLogs.add(dailySteps);
+
+    await expect(getLocalDataCounts()).resolves.toMatchObject({ healthLogs: 1 });
+  });
+
   it("does not treat matching records with different key order as a conflict", async () => {
     const { __cloudSyncTest } = await loadCloudSyncModule();
     const updatedAt = "2026-06-29T12:00:00.000Z";
@@ -109,5 +131,20 @@ describe("cloud sync", () => {
     expect(__cloudSyncTest.getRecordUpdatedAtMs(withMilliseconds)).toBe(
       __cloudSyncTest.getRecordUpdatedAtMs(withoutMilliseconds)
     );
+  });
+
+  it("rejects oversized records before they are sent to Firestore", async () => {
+    const { __cloudSyncTest } = await loadCloudSyncModule();
+    const now = "2026-06-29T12:00:00.000Z";
+
+    expect(() =>
+      __cloudSyncTest.assertCloudRecordFits("stockItems", {
+        id: "stock-too-large",
+        name: "Oversized COA",
+        coaDataUrl: `data:application/pdf;base64,${"A".repeat(910 * 1024)}`,
+        createdAt: now,
+        updatedAt: now,
+      })
+    ).toThrow(/too large to sync safely/i);
   });
 });

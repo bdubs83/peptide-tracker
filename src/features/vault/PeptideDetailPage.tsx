@@ -9,7 +9,7 @@ import { Button } from "../../components/Button";
 import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
 import { SyringeVisualizer } from "../../components/SyringeVisualizer";
-import { deletePeptideWithSchedule, logInjectionEvent, deleteInjectionLog } from "./vaultUtils";
+import { deletePeptideWithSchedule, logInjectionEvent, deleteInjectionLog, updateInjectionLog } from "./vaultUtils";
 import {
   getNextScheduledDoseDate,
   getDaysUntilNextScheduledDose,
@@ -24,6 +24,7 @@ import {
   getCurrentVialTotalMcg,
   getCurrentVialAdjustments,
   getCurrentVialAdjustedMcg,
+  isCompletedScheduledInjectionLog,
 } from "../../utils/dateUtils";
 import {
   formatMl,
@@ -34,8 +35,9 @@ import {
 } from "../../utils/formatting";
 import { getPreferredSchedule } from "../../utils/scheduleUtils";
 import { normalizeDoseToMcg } from "../calculator/calculatorUtils";
-import { isAvailableStock } from "../../utils/stockUtils";
+import { isAvailableStock, isSameStockProductName } from "../../utils/stockUtils";
 import { refillOpenVialFromStock } from "./refillFromStock";
+import { RefillFromStockModal } from "./RefillFromStockModal";
 import {
   ChevronLeft,
   ChevronDown,
@@ -60,6 +62,7 @@ type InjectionSiteSide = "front" | "back";
 type DoseScheduleRow = {
   id: string;
   startDate: string;
+  endDate: string;
   durationType: DoseScheduleDurationType;
   durationValue: string;
   intervalDays: string;
@@ -114,6 +117,7 @@ const isDoseUnit = (value: string): value is DoseUnit => value === "mcg" || valu
 const makeDoseScheduleRow = (doseUnit: DoseUnit = "mg"): DoseScheduleRow => ({
   id: crypto.randomUUID(),
   startDate: "",
+  endDate: "",
   durationType: "weeks",
   durationValue: "",
   intervalDays: "7",
@@ -129,6 +133,7 @@ const getDefaultDoseScheduleRows = (doseUnit: DoseUnit): DoseScheduleRow[] => [
 const phaseToRow = (phase: DoseSchedulePhase): DoseScheduleRow => ({
   id: phase.id,
   startDate: phase.startDate || "",
+  endDate: phase.endDate || "",
   durationType: phase.durationType,
   durationValue: phase.durationValue ? String(phase.durationValue) : "",
   intervalDays: phase.intervalDays ? String(phase.intervalDays) : "7",
@@ -145,6 +150,16 @@ const getCurrentTimeString = () => {
 const buildLocalDateTimeIso = (date: string, time: string) => {
   if (!date || !time) return new Date().toISOString();
   return new Date(`${date}T${time}`).toISOString();
+};
+
+const getLocalDateTimeFields = (isoDateTime?: string) => {
+  if (!isoDateTime) return { date: "", time: "" };
+  const date = new Date(isoDateTime);
+  if (Number.isNaN(date.getTime())) return { date: "", time: "" };
+  return {
+    date: getLocalDateString(date),
+    time: `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`,
+  };
 };
 
 const getDrawForDose = (
@@ -393,12 +408,19 @@ export const PeptideDetailPage: React.FC = () => {
   const [logDate, setLogDate] = useState(today);
   const [logTime, setLogTime] = useState(getCurrentTimeString());
   const [logStatus, setLogStatus] = useState<LogStatus>("taken");
+  const [logDoseValue, setLogDoseValue] = useState("");
+  const [logDoseUnit, setLogDoseUnit] = useState<DoseUnit>("mg");
   const [logNotes, setLogNotes] = useState("");
   const [selectedInjectionSiteId, setSelectedInjectionSiteId] = useState("");
+  const [editingLog, setEditingLog] = useState<InjectionLog | null>(null);
   const [isReconstitutionOpen, setIsReconstitutionOpen] = useState(false);
   const [isProjectionOpen, setIsProjectionOpen] = useState(false);
   const [isDosingScheduleOpen, setIsDosingScheduleOpen] = useState(false);
   const [isInjectionHistoryOpen, setIsInjectionHistoryOpen] = useState(false);
+  const [isPastHistoryModalOpen, setIsPastHistoryModalOpen] = useState(false);
+  const [pastHistoryDate, setPastHistoryDate] = useState(today);
+  const [pastHistoryDose, setPastHistoryDose] = useState("");
+  const [pastHistoryUnit, setPastHistoryUnit] = useState<DoseUnit>("mg");
   const [doseScheduleStartDate, setDoseScheduleStartDate] = useState(today);
   const [cycleEnabled, setCycleEnabled] = useState(false);
   const [cycleWeeksOn, setCycleWeeksOn] = useState("8");
@@ -408,7 +430,6 @@ export const PeptideDetailPage: React.FC = () => {
   const hydratedDoseScheduleKeyRef = useRef("");
   const [pendingPastDoseSave, setPendingPastDoseSave] = useState<PendingPastDoseSave | null>(null);
   const [refillRequest, setRefillRequest] = useState<RefillRequest | null>(null);
-  const [selectedRefillStockId, setSelectedRefillStockId] = useState<string | null>(null);
   const [isAdjustVialOpen, setIsAdjustVialOpen] = useState(false);
   const [adjustmentDate, setAdjustmentDate] = useState(today);
   const [adjustmentAmount, setAdjustmentAmount] = useState("");
@@ -416,6 +437,7 @@ export const PeptideDetailPage: React.FC = () => {
   const [adjustmentReason, setAdjustmentReason] = useState<VialAdjustmentReason>("familyFriend");
   const [adjustmentPersonLabel, setAdjustmentPersonLabel] = useState("");
   const [adjustmentNotes, setAdjustmentNotes] = useState("");
+  const [openedDate, setOpenedDate] = useState("");
   const [doseScheduleRows, setDoseScheduleRows] = useState<DoseScheduleRow[]>(() =>
     getDefaultDoseScheduleRows("mg")
   );
@@ -470,6 +492,11 @@ export const PeptideDetailPage: React.FC = () => {
     });
   }, [data?.peptide, data?.schedule, isDoseScheduleDirty, today]);
 
+  useEffect(() => {
+    const openedAt = data?.peptide?.currentVialStartedAt || data?.peptide?.createdAt;
+    queueMicrotask(() => setOpenedDate(openedAt ? openedAt.slice(0, 10) : ""));
+  }, [data?.peptide?.id, data?.peptide?.currentVialStartedAt, data?.peptide?.createdAt]);
+
   if (!data || !data.peptide) {
     return (
       <div style={{ padding: "20px", textAlign: "center" }}>
@@ -485,11 +512,14 @@ export const PeptideDetailPage: React.FC = () => {
   const currentVialLogs = getCurrentVialLogs(peptide, allLogs);
   const currentVialAdjustments = getCurrentVialAdjustments(peptide, allVialAdjustments);
   const historyLogs = logsList.filter((log) => log.status !== "scheduled");
+  const unassignedDoseLogs = logsList.filter(
+    (log) => log.inventoryAssignment === "unassigned" && (log.status === "taken" || log.status === "manual")
+  );
   const syringeDisplayMode = settings?.find((item) => item.key === "pref_displayMode")?.value === "mL" ? "mL" : "units";
 
   // Calculate schedule projections
   const loggedDates = new Set(
-    logsList.filter((l) => l.status !== "scheduled").map((l) => l.scheduledDate)
+    logsList.filter(isCompletedScheduledInjectionLog).map((l) => l.scheduledDate)
   );
 
   const nextDate = schedule ? getNextScheduledDoseDate(schedule, today, loggedDates) : "";
@@ -533,7 +563,7 @@ export const PeptideDetailPage: React.FC = () => {
     : Math.floor(remainingMcg / normalizeDoseToMcg(peptide.desiredDoseValue, peptide.desiredDoseUnit));
   const availableStockForPeptide = stockItems.filter(
     (item) =>
-      item.name.trim().toLowerCase() === peptide.name.trim().toLowerCase() &&
+      isSameStockProductName(item.name, peptide.name) &&
       isAvailableStock(item, today)
   );
 
@@ -551,12 +581,44 @@ export const PeptideDetailPage: React.FC = () => {
     }
 
     setRefillRequest({ peptide, stockOptions: availableStockForPeptide });
-    setSelectedRefillStockId(availableStockForPeptide.length === 1 ? availableStockForPeptide[0].id : null);
+  };
+
+  const handleSaveOpenedDate = async () => {
+    if (!openedDate) return;
+    const nowIso = new Date().toISOString();
+    const startedAt = buildLocalDateTimeIso(openedDate, "12:00");
+    const openVialId = peptide.openVialId || peptide.id;
+    const sharedPeptides = activeRecords(await db.peptides.where("openVialId").equals(openVialId).toArray());
+    const targetIds = sharedPeptides.length ? sharedPeptides.map((item) => item.id) : [peptide.id];
+    await db.transaction("rw", db.peptides, async () => {
+      for (const peptideId of targetIds) {
+        await db.peptides.update(peptideId, { currentVialStartedAt: startedAt, updatedAt: nowIso });
+      }
+    });
+  };
+
+  const handleAssignUnassignedDoses = async () => {
+    if (!unassignedDoseLogs.length) return;
+    const unassignedMcg = unassignedDoseLogs.reduce(
+      (sum, log) => sum + normalizeDoseToMcg(log.doseValue, log.doseUnit),
+      0
+    );
+    if (unassignedMcg > remainingMcg) {
+      alert("These doses are larger than the amount currently remaining in this vial. Adjust the vial or assign fewer doses first.");
+      return;
+    }
+    if (!confirm(`Apply ${unassignedDoseLogs.length} unassigned dose${unassignedDoseLogs.length === 1 ? "" : "s"} to this open vial?`)) return;
+    const nowIso = new Date().toISOString();
+    const openVialId = peptide.openVialId || peptide.id;
+    await db.transaction("rw", db.injectionLogs, async () => {
+      for (const log of unassignedDoseLogs) {
+        await db.injectionLogs.update(log.id, { openVialId, inventoryAssignment: "assigned", updatedAt: nowIso });
+      }
+    });
   };
 
   const closeRefillModal = () => {
     setRefillRequest(null);
-    setSelectedRefillStockId(null);
   };
 
   const resetAdjustmentForm = () => {
@@ -620,23 +682,16 @@ export const PeptideDetailPage: React.FC = () => {
     closeAdjustVialModal();
   };
 
-  const handleConfirmRefillFromStock = async () => {
-    if (!refillRequest || !selectedRefillStockId) return;
-
-    const stockItem = refillRequest.stockOptions.find((item) => item.id === selectedRefillStockId);
-    if (!stockItem) return;
-
-    try {
-      await refillOpenVialFromStock({
-        peptide: refillRequest.peptide,
-        stockItem,
-        existingRemainingMg: remainingMg,
-        today,
-      });
-      closeRefillModal();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Could not pull this vial from stock.");
-    }
+  const handleConfirmRefillFromStock = async (stockItem: StockItem, reconstitutionBacWaterMl: number) => {
+    if (!refillRequest) return;
+    await refillOpenVialFromStock({
+      peptide: refillRequest.peptide,
+      stockItem,
+      existingRemainingMg: remainingMg,
+      today,
+      reconstitutionBacWaterMl,
+    });
+    closeRefillModal();
   };
 
   const handleRecalculate = () => {
@@ -657,9 +712,15 @@ export const PeptideDetailPage: React.FC = () => {
     const selectedInjectionSite = injectionSites.find((site) => site.id === selectedInjectionSiteId);
     const nowIso = new Date().toISOString();
     const isActualInjection = logStatus === "taken" || logStatus === "manual";
-    const scheduledDose = schedule
+    const scheduledDose = editingLog
+      ? { doseValue: Number(logDoseValue), doseUnit: logDoseUnit }
+      : schedule
       ? getScheduledDoseForDate(peptide, schedule, logDate)
       : { doseValue: peptide.desiredDoseValue, doseUnit: peptide.desiredDoseUnit };
+    if (!Number.isFinite(scheduledDose.doseValue) || scheduledDose.doseValue <= 0) {
+      alert("Enter a dose greater than zero.");
+      return;
+    }
     const draw = getDrawForDose(
       scheduledDose.doseValue,
       scheduledDose.doseUnit,
@@ -667,12 +728,7 @@ export const PeptideDetailPage: React.FC = () => {
       peptide.unitsPerMl
     );
 
-    const newLog: InjectionLog = {
-      id: crypto.randomUUID(),
-      peptideId: peptide.id,
-      vaultUserId: peptide.vaultUserId,
-      openVialId: peptide.openVialId || peptide.id,
-      peptideNameSnapshot: peptide.name,
+    const logValues = {
       scheduledDate: logDate,
       actualDateTime: isActualInjection ? buildLocalDateTimeIso(logDate, logTime) : undefined,
       doseValue: scheduledDose.doseValue,
@@ -684,14 +740,42 @@ export const PeptideDetailPage: React.FC = () => {
       injectionSiteLabel: isActualInjection ? selectedInjectionSite?.label : undefined,
       injectionSiteSide: isActualInjection ? selectedInjectionSite?.side : undefined,
       notes: logNotes.trim() || undefined,
-      createdAt: nowIso,
-      updatedAt: nowIso,
     };
 
-    await logInjectionEvent(newLog);
+    if (editingLog) {
+      await updateInjectionLog(editingLog.id, logValues);
+    } else {
+      const newLog: InjectionLog = {
+      id: crypto.randomUUID(),
+      peptideId: peptide.id,
+      vaultUserId: peptide.vaultUserId,
+      openVialId: peptide.openVialId || peptide.id,
+      peptideNameSnapshot: peptide.name,
+      ...logValues,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      };
+
+      await logInjectionEvent(newLog);
+    }
     setIsLogModalOpen(false);
+    setEditingLog(null);
+    setLogDoseValue("");
     setLogNotes("");
     setSelectedInjectionSiteId("");
+  };
+
+  const openLogForEditing = (log: InjectionLog) => {
+    const dateTime = getLocalDateTimeFields(log.actualDateTime);
+    setEditingLog(log);
+    setLogDate(log.scheduledDate);
+    setLogTime(dateTime.time || getCurrentTimeString());
+    setLogStatus(log.status === "scheduled" ? "taken" : log.status);
+    setLogDoseValue(String(log.doseValue));
+    setLogDoseUnit(log.doseUnit);
+    setLogNotes(log.notes || "");
+    setSelectedInjectionSiteId(log.injectionSiteId || "");
+    setIsLogModalOpen(true);
   };
 
   const handleQuickLogToday = async () => {
@@ -742,6 +826,43 @@ export const PeptideDetailPage: React.FC = () => {
     );
   };
 
+  const openPastHistoryModal = () => {
+    setPastHistoryDate(today);
+    setPastHistoryDose("");
+    setPastHistoryUnit("mg");
+    setIsPastHistoryModalOpen(true);
+  };
+
+  const handleSavePastHistory = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const doseValue = Number(pastHistoryDose);
+    if (!Number.isFinite(doseValue) || doseValue <= 0) {
+      alert("Enter a dose greater than zero.");
+      return;
+    }
+    const draw = getDrawForDose(doseValue, pastHistoryUnit, peptide.concentrationMcgPerMl, peptide.unitsPerMl);
+    const nowIso = new Date().toISOString();
+    await logInjectionEvent({
+      id: crypto.randomUUID(),
+      peptideId: peptide.id,
+      vaultUserId: peptide.vaultUserId,
+      peptideNameSnapshot: peptide.name,
+      scheduledDate: pastHistoryDate,
+      actualDateTime: buildLocalDateTimeIso(pastHistoryDate, "12:00"),
+      doseValue,
+      doseUnit: pastHistoryUnit,
+      drawMl: draw.drawMl,
+      drawUnits: draw.drawUnits,
+      status: "taken",
+      entryType: "adHoc",
+      inventoryAssignment: "historical",
+      notes: "Historical dose recorded before using the app.",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+    setIsPastHistoryModalOpen(false);
+  };
+
   const handleAddDoseScheduleRow = () => {
     markDoseScheduleDirty();
     setDoseScheduleRows((rows) =>
@@ -776,13 +897,39 @@ export const PeptideDetailPage: React.FC = () => {
     pastDates: string[]
   ) => {
     const nowIso = new Date().toISOString();
-    await db.transaction("rw", [db.schedules, db.injectionLogs], async () => {
+    const scheduleStartDate =
+      updatedSchedule.doseScheduleStartDate || updatedSchedule.startDate || updatedSchedule.lastInjectionDate || today;
+    const mostRecentDosePhase = getDoseScheduleOccurrences(updatedSchedule, scheduleStartDate, today).at(-1)?.phase;
+    const nextDoseDate = getNextScheduledDoseDate(updatedSchedule, today);
+    const activeDose = mostRecentDosePhase
+      ? { doseValue: mostRecentDosePhase.doseValue, doseUnit: mostRecentDosePhase.doseUnit }
+      : getScheduledDoseForDate(peptide, updatedSchedule, nextDoseDate || today);
+    const activeDraw = getDrawForDose(
+      activeDose.doseValue,
+      activeDose.doseUnit,
+      peptide.concentrationMcgPerMl,
+      peptide.unitsPerMl
+    );
+    const activeDoseMcg = normalizeDoseToMcg(activeDose.doseValue, activeDose.doseUnit);
+    const vialMcg = peptide.vialMg * 1000;
+
+    await db.transaction("rw", [db.peptides, db.schedules, db.injectionLogs], async () => {
       await db.schedules.update(updatedSchedule.id, {
         doseSchedule: phases,
         doseScheduleStartDate: updatedSchedule.doseScheduleStartDate,
         cycleEnabled: updatedSchedule.cycleEnabled,
         cycleWeeksOn: updatedSchedule.cycleWeeksOn,
         cycleWeeksOff: updatedSchedule.cycleWeeksOff,
+        updatedAt: nowIso,
+      });
+
+      await db.peptides.update(peptide.id, {
+        desiredDoseValue: activeDose.doseValue,
+        desiredDoseUnit: activeDose.doseUnit,
+        doseMl: activeDraw.drawMl,
+        doseUnits: activeDraw.drawUnits,
+        estimatedDosesPerVial: activeDoseMcg > 0 ? vialMcg / activeDoseMcg : peptide.estimatedDosesPerVial,
+        percentOfVialPerDose: vialMcg > 0 ? (activeDoseMcg / vialMcg) * 100 : peptide.percentOfVialPerDose,
         updatedAt: nowIso,
       });
 
@@ -868,6 +1015,10 @@ export const PeptideDetailPage: React.FC = () => {
       const duration = parseInt(row.durationValue, 10);
       const interval = parseInt(row.intervalDays, 10);
       const isDaySpecificPhase = row.durationType === "daysOfWeek";
+      if (isLast && row.endDate && row.endDate < doseScheduleStartDate) {
+        alert("The schedule end date cannot be before the first phase start date.");
+        return;
+      }
       if (isNaN(dose) || dose <= 0) {
         alert("Each dosing schedule line needs a valid dose.");
         return;
@@ -891,13 +1042,14 @@ export const PeptideDetailPage: React.FC = () => {
       phases.push({
         id: row.id,
         startDate: index > 0 && row.startDate ? row.startDate : undefined,
+        endDate: isLast && row.endDate ? row.endDate : undefined,
         durationType: row.durationType,
         durationValue: requiresDuration ? duration : undefined,
         intervalDays: row.durationType === "injections" ? interval : undefined,
         daysOfWeek: isDaySpecificPhase ? row.daysOfWeek : undefined,
         doseValue: dose,
         doseUnit: row.doseUnit,
-        isContinuous: isLast,
+        isContinuous: isLast && !row.endDate,
       });
     }
 
@@ -912,7 +1064,7 @@ export const PeptideDetailPage: React.FC = () => {
 
     const existingLogDates = new Set(
       logsList
-        .filter((log) => log.status !== "scheduled")
+        .filter(isCompletedScheduledInjectionLog)
         .map((log) => log.scheduledDate)
     );
     const pastDates =
@@ -1123,6 +1275,31 @@ export const PeptideDetailPage: React.FC = () => {
           </div>
         </div>
 
+        <div style={{ display: "flex", alignItems: "end", gap: "10px", marginBottom: "16px" }}>
+          <Input
+            label="Date Opened"
+            type="date"
+            value={openedDate}
+            onChange={(event) => setOpenedDate(event.target.value)}
+            required
+          />
+          <Button type="button" variant="secondary" onClick={() => void handleSaveOpenedDate()}>
+            Save
+          </Button>
+        </div>
+
+        {unassignedDoseLogs.length > 0 && (
+          <div style={{ marginBottom: "16px", padding: "12px", borderRadius: "8px", border: "1px solid rgba(245, 158, 11, 0.45)", background: "rgba(245, 158, 11, 0.08)" }}>
+            <strong>{unassignedDoseLogs.length} dose{unassignedDoseLogs.length === 1 ? "" : "s"} not assigned to a vial</strong>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: 1.45, margin: "6px 0 10px" }}>
+              These doses are in your history but do not affect inventory until you assign them.
+            </p>
+            <Button type="button" variant="secondary" onClick={() => void handleAssignUnassignedDoses()}>
+              Apply to this open vial
+            </Button>
+          </div>
+        )}
+
         {/* Big Draw Amount Callout */}
         <div
           style={{
@@ -1134,10 +1311,12 @@ export const PeptideDetailPage: React.FC = () => {
           }}
         >
           <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", textTransform: "uppercase" }}>
-            Injection Draw
+            {peptide.syringeSizeMl === 3 ? "Pen Dial Setting" : "Injection Draw"}
           </span>
           <h1 style={{ fontSize: "1.8rem", color: "var(--color-primary)", margin: "4px 0", fontFamily: "var(--font-display)" }}>
-            {formatMl(nextScheduledDraw.drawMl)} / {formatUnits(nextScheduledDraw.drawUnits)}
+            {peptide.syringeSizeMl === 3
+              ? `${formatUnits(nextScheduledDraw.drawUnits)} / ${formatMl(nextScheduledDraw.drawMl)}`
+              : `${formatMl(nextScheduledDraw.drawMl)} / ${formatUnits(nextScheduledDraw.drawUnits)}`}
           </h1>
           <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             Dose: {formatDose(nextScheduledDose.doseValue, nextScheduledDose.doseUnit)}
@@ -1179,9 +1358,11 @@ export const PeptideDetailPage: React.FC = () => {
                 </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-secondary)" }}>Syringe Size / Calibration</span>
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {peptide.syringeSizeMl === 3 ? "Injection Pen / Calibration" : "Syringe Size / Calibration"}
+                </span>
                 <span style={{ fontWeight: 500 }}>
-                  {peptide.syringeSizeMl} mL ({peptide.unitsPerMl} units/mL)
+                  {peptide.syringeSizeMl === 3 ? "3 mL Pen" : `${peptide.syringeSizeMl} mL Syringe`} ({peptide.unitsPerMl} units/mL)
                 </span>
               </div>
             </div>
@@ -1360,6 +1541,15 @@ export const PeptideDetailPage: React.FC = () => {
                           </button>
                         )}
                       </div>
+                      {isLast && (
+                        <Input
+                          label="End Date"
+                          type="date"
+                          value={row.endDate}
+                          onChange={(e) => updateDoseScheduleRow(row.id, { endDate: e.target.value })}
+                          min={doseScheduleStartDate}
+                        />
+                      )}
                       {showDaysOfWeek ? (
                         <>
                           {!isLast && (
@@ -1483,7 +1673,7 @@ export const PeptideDetailPage: React.FC = () => {
                             fontWeight: 700,
                           }}
                         >
-                          Continuous phase
+                          {row.endDate ? `Ends ${row.endDate}` : "Continuous phase"}
                         </div>
                       )}
                     </div>
@@ -1639,30 +1829,31 @@ export const PeptideDetailPage: React.FC = () => {
             isOpen={isInjectionHistoryOpen}
             onToggle={() => setIsInjectionHistoryOpen((open) => !open)}
             action={
-              <button
-                onClick={() => {
-                  setLogDate(today);
-                  setLogTime(getCurrentTimeString());
-                  setLogStatus("taken");
-                  setSelectedInjectionSiteId("");
-                  setIsLogModalOpen(true);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--color-primary)",
-                  cursor: "pointer",
-                  fontSize: "0.85rem",
-                  fontWeight: 600,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                  flexShrink: 0,
-                }}
-              >
-                <Plus size={14} />
-                Add Log
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <button
+                  onClick={openPastHistoryModal}
+                  style={{ background: "none", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600, flexShrink: 0 }}
+                >
+                  Record Past History
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingLog(null);
+                    setLogDate(today);
+                    setLogTime(getCurrentTimeString());
+                    setLogStatus("taken");
+                    setLogDoseValue("");
+                    setLogDoseUnit(peptide.desiredDoseUnit);
+                    setLogNotes("");
+                    setSelectedInjectionSiteId("");
+                    setIsLogModalOpen(true);
+                  }}
+                  style={{ background: "none", border: "none", color: "var(--color-primary)", cursor: "pointer", fontSize: "0.85rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}
+                >
+                  <Plus size={14} />
+                  Add Log
+                </button>
+              </div>
             }
           />
 
@@ -1708,8 +1899,16 @@ export const PeptideDetailPage: React.FC = () => {
 
                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                     <span className={`badge badge-${log.status}`}>
-                      {log.status}
+                      {log.inventoryAssignment === "historical" ? "past history" : log.entryType === "adHoc" ? "ad-hoc" : log.status}
                     </span>
+                    <button
+                      onClick={() => openLogForEditing(log)}
+                      aria-label={`Edit injection from ${getFriendlyDate(log.scheduledDate)}`}
+                      title="Edit injection"
+                      style={{ background: "none", border: "none", color: "var(--color-primary)", cursor: "pointer", padding: "4px", display: "flex", alignItems: "center" }}
+                    >
+                      <Edit2 size={14} />
+                    </button>
                     <button
                       onClick={() => handleDeleteLog(log.id)}
                       style={{
@@ -1743,7 +1942,7 @@ export const PeptideDetailPage: React.FC = () => {
               maxHeight: "calc(100dvh - 24px)",
             }}
           >
-            <h3 style={{ fontSize: "1.2rem", marginBottom: "16px" }}>Log Injection</h3>
+            <h3 style={{ fontSize: "1.2rem", marginBottom: "16px" }}>{editingLog ? "Edit Injection" : "Log Injection"}</h3>
             
             <form onSubmit={handleLogSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
               <div className="form-row-grid">
@@ -1763,6 +1962,13 @@ export const PeptideDetailPage: React.FC = () => {
                   disabled={logStatus === "skipped" || logStatus === "missed"}
                 />
               </div>
+
+              {editingLog && (
+                <div className="form-row-grid">
+                  <Input label="Dose" type="number" inputMode="decimal" min="0" step="any" value={logDoseValue} onChange={(e) => setLogDoseValue(e.target.value)} required />
+                  <Select label="Unit" value={logDoseUnit} onChange={(e) => setLogDoseUnit(e.target.value as DoseUnit)} options={[{ value: "mg", label: "mg" }, { value: "mcg", label: "mcg" }]} />
+                </div>
+              )}
 
               <Select
                 label="Status"
@@ -1798,11 +2004,11 @@ export const PeptideDetailPage: React.FC = () => {
               </div>
 
               <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
-                <Button type="button" variant="secondary" fullWidth onClick={() => setIsLogModalOpen(false)}>
+                <Button type="button" variant="secondary" fullWidth onClick={() => { setIsLogModalOpen(false); setEditingLog(null); }}>
                   Cancel
                 </Button>
                 <Button type="submit" variant="primary" fullWidth>
-                  Save Log
+                  {editingLog ? "Save Changes" : "Save Log"}
                 </Button>
               </div>
             </form>
@@ -1811,117 +2017,36 @@ export const PeptideDetailPage: React.FC = () => {
         document.body
       )}
 
-      {refillRequest && createPortal(
-        <div
-          className="modal-overlay stock-modal-overlay"
-          onClick={closeRefillModal}
-          style={{
-            alignItems: "flex-start",
-            overflowY: "auto",
-            padding: "12px",
-          }}
-        >
-          <div
-            className="modal-content stock-modal-content"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div
-              className="stock-modal-header"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-              }}
-            >
-              <div>
-                <h3 style={{ fontSize: "1.15rem" }}>Pull From Stock</h3>
-                <p style={{ color: "var(--text-secondary)", fontSize: "0.84rem", marginTop: "4px" }}>
-                  {refillRequest.peptide.name}
-                </p>
+      {isPastHistoryModalOpen && createPortal(
+        <div className="modal-overlay" onClick={() => setIsPastHistoryModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: "460px" }} onClick={(event) => event.stopPropagation()}>
+            <h3 style={{ fontSize: "1.2rem", marginBottom: "8px" }}>Record Past History</h3>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.86rem", lineHeight: 1.45, margin: "0 0 16px" }}>
+              Add a dose from before you began using the app. It appears in history and half-life insights, but does not change vial inventory or dosing schedules.
+            </p>
+            <form onSubmit={handleSavePastHistory} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <Input label="Date" type="date" value={pastHistoryDate} onChange={(event) => setPastHistoryDate(event.target.value)} required />
+              <div className="form-row-grid">
+                <Input label="Dose" type="number" inputMode="decimal" min="0" step="any" value={pastHistoryDose} onChange={(event) => setPastHistoryDose(event.target.value)} required autoFocus />
+                <Select label="Unit" value={pastHistoryUnit} onChange={(event) => setPastHistoryUnit(event.target.value as DoseUnit)} options={[{ value: "mg", label: "mg" }, { value: "mcg", label: "mcg" }]} />
               </div>
-              <button
-                onClick={closeRefillModal}
-                aria-label="Close refill popup"
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-secondary)",
-                  cursor: "pointer",
-                  padding: "4px",
-                }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              {refillRequest.stockOptions.map((item) => {
-                const selected = selectedRefillStockId === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setSelectedRefillStockId(item.id)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      border: selected ? "1px solid var(--color-primary)" : "1px solid var(--border-color)",
-                      borderRadius: "8px",
-                      background: selected ? "rgba(99, 102, 241, 0.12)" : "rgba(255,255,255,0.02)",
-                      color: "var(--text-primary)",
-                      padding: "12px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
-                      <strong>{item.mgPerVial || "Unknown"} mg vial</strong>
-                      <span className="badge">{item.numberOfVials || "0"} in stock</span>
-                    </div>
-                    <div style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginTop: "6px" }}>
-                      {item.batchNumber ? `Batch ${item.batchNumber}` : "No batch listed"}
-                      {item.supplier ? ` • ${item.supplier}` : ""}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div
-              style={{
-                marginTop: "14px",
-                padding: "12px",
-                borderRadius: "8px",
-                border: "1px solid rgba(245, 158, 11, 0.38)",
-                background: "rgba(245, 158, 11, 0.08)",
-                color: "var(--text-secondary)",
-                fontSize: "0.86rem",
-                lineHeight: 1.5,
-              }}
-            >
-              Verify this vial is reconstituted the same as the existing vial:{" "}
-              <strong style={{ color: "var(--text-primary)" }}>
-                {refillRequest.peptide.bacWaterMl} mL bac water
-              </strong>
-              . The app will keep the same dose schedule and recalculate the draw amount from the selected vial mg.
-            </div>
-
-            <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-              <Button variant="secondary" fullWidth onClick={closeRefillModal}>
-                Cancel
-              </Button>
-              <Button
-                variant="success"
-                fullWidth
-                onClick={handleConfirmRefillFromStock}
-                disabled={!selectedRefillStockId}
-              >
-                Yes, Same Reconstitution
-              </Button>
-            </div>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <Button type="button" variant="secondary" fullWidth onClick={() => setIsPastHistoryModalOpen(false)}>Cancel</Button>
+                <Button type="submit" variant="primary" fullWidth>Save History</Button>
+              </div>
+            </form>
           </div>
         </div>,
         document.body
+      )}
+
+      {refillRequest && (
+        <RefillFromStockModal
+          peptide={refillRequest.peptide}
+          stockOptions={refillRequest.stockOptions}
+          onClose={closeRefillModal}
+          onConfirm={handleConfirmRefillFromStock}
+        />
       )}
 
       {isAdjustVialOpen && createPortal(

@@ -5,6 +5,7 @@ export type VialAdjustmentReason =
   | "spillage"
   | "primingLoss"
   | "measurementCorrection"
+  | "transferToPen"
   | "discarded"
   | "other";
 

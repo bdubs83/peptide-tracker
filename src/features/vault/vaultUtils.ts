@@ -32,6 +32,13 @@ export async function deletePeptideWithSchedule(peptideId: string): Promise<void
 }
 
 export async function logInjectionEvent(log: InjectionLog): Promise<void> {
+  // A standalone injection is an independent event. In particular, it may be
+  // recorded on the same day as a planned dose from the same vial.
+  if (log.entryType === "adHoc") {
+    await db.injectionLogs.put(log);
+    return;
+  }
+
   const openVialId = log.openVialId || log.peptideId;
   const matchingLogs = await db.injectionLogs
     .where("peptideId")
@@ -39,7 +46,11 @@ export async function logInjectionEvent(log: InjectionLog): Promise<void> {
     .filter(isActiveRecord)
     .filter((existingLog) => {
       const existingOpenVialId = existingLog.openVialId || existingLog.peptideId;
-      return existingLog.scheduledDate === log.scheduledDate && existingOpenVialId === openVialId;
+      return (
+        existingLog.entryType !== "adHoc" &&
+        existingLog.scheduledDate === log.scheduledDate &&
+        existingOpenVialId === openVialId
+      );
     })
     .toArray();
 
@@ -76,5 +87,15 @@ export async function deleteInjectionLog(logId: string): Promise<void> {
   await db.injectionLogs.update(logId, {
     deletedAt: nowIso,
     updatedAt: nowIso,
+  });
+}
+
+export async function updateInjectionLog(
+  logId: string,
+  updates: Partial<Omit<InjectionLog, "id" | "createdAt" | "updatedAt">>
+): Promise<void> {
+  await db.injectionLogs.update(logId, {
+    ...updates,
+    updatedAt: new Date().toISOString(),
   });
 }

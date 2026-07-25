@@ -1,5 +1,6 @@
 export type DoseUnit = "mcg" | "mg";
 export type HalfLifeUnit = "hours" | "days";
+export type OpenContainerType = "vial" | "pen";
 
 export interface Peptide {
   id: string;
@@ -21,6 +22,10 @@ export interface Peptide {
   estimatedDosesPerVial: number;
   percentOfVialPerDose: number;
 
+  /** Oil-based products (for example testosterone) do not use reconstitution. */
+  isOilBased?: boolean;
+  oilVolumeMl?: number;
+
   halfLifeHours?: number;
   halfLifeUnit?: HalfLifeUnit;
 
@@ -32,6 +37,13 @@ export interface Peptide {
   sourceOpenVialId?: string;
   vaultUserId?: string;
   openVialId?: string;
+
+  /** Vials are the default. Pens are active containers filled from a vial. */
+  containerType?: OpenContainerType;
+  /** An internal container record, not a user's protocol. */
+  isContainerOnly?: boolean;
+  containerLabel?: string;
+  sharedWithUserIds?: string[];
 
   createdAt: string;
   updatedAt: string;

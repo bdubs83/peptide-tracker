@@ -17,6 +17,7 @@ import {
   getLocalDateString,
   getScheduledDoseForDate,
   getUpcomingInjectionDates,
+  isCompletedScheduledInjectionLog,
   parseLocalDate,
 } from "../../utils/dateUtils";
 import { getLegacyScheduleFirstDoseDate } from "../../utils/scheduleMigration";
@@ -28,9 +29,11 @@ import { DEFAULT_VAULT_USER_ID } from "../../types/vaultUser";
 
 type ScheduleType = "everyXDays" | "daysOfWeek";
 type AnchorType = "startDate" | "lastInjectionDate";
+type DosingMode = "scheduled" | "adHoc";
 type DoseScheduleRow = {
   id: string;
   startDate: string;
+  endDate: string;
   durationType: DoseScheduleDurationType;
   durationValue: string;
   intervalDays: string;
@@ -67,6 +70,7 @@ const isDoseScheduleDurationType = (value: string): value is DoseScheduleDuratio
 const makeDoseScheduleRow = (doseUnit: DoseUnit = "mg", doseValue = ""): DoseScheduleRow => ({
   id: crypto.randomUUID(),
   startDate: "",
+  endDate: "",
   durationType: "injections",
   durationValue: "",
   intervalDays: "3",
@@ -82,6 +86,7 @@ const getDefaultDoseScheduleRows = (doseUnit: DoseUnit, doseValue: string): Dose
 const phaseToRow = (phase: DoseSchedulePhase): DoseScheduleRow => ({
   id: phase.id,
   startDate: phase.startDate || "",
+  endDate: phase.endDate || "",
   durationType: phase.durationType,
   durationValue: phase.durationValue ? String(phase.durationValue) : "",
   intervalDays: phase.intervalDays ? String(phase.intervalDays) : "3",
@@ -92,6 +97,7 @@ const phaseToRow = (phase: DoseSchedulePhase): DoseScheduleRow => ({
 const legacyScheduleToRow = (schedule: PeptideSchedule, doseUnit: DoseUnit, doseValue: number): DoseScheduleRow => ({
   id: crypto.randomUUID(),
   startDate: "",
+  endDate: "",
   durationType: schedule.scheduleType === "daysOfWeek" ? "daysOfWeek" : "injections",
   durationValue: "",
   intervalDays: String(schedule.intervalDays || 3),
@@ -121,6 +127,10 @@ const getStandardSyringeOption = (size: number) => {
 };
 type AddSourceType = "manual" | "stock" | "openVial";
 
+const getOpenContainerById = (options: Peptide[] | undefined, openVialId: string) =>
+  options?.find((peptide) => (peptide.openVialId || peptide.id) === openVialId && peptide.isContainerOnly) ||
+  options?.find((peptide) => (peptide.openVialId || peptide.id) === openVialId);
+
 export const AddPeptidePage: React.FC = () => {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
@@ -147,6 +157,7 @@ export const AddPeptidePage: React.FC = () => {
   const [name, setName] = useState("");
   const [vialMg, setVialMg] = useState("5");
   const [bacWaterMl, setBacWaterMl] = useState("2");
+  const [oilVolumeMl, setOilVolumeMl] = useState("1");
   const [desiredDoseValue, setDesiredDoseValue] = useState("0.25");
   const [desiredDoseUnit, setDesiredDoseUnit] = useState<DoseUnit>("mg");
   const [syringeSize, setSyringeSize] = useState("1.0");
@@ -156,6 +167,8 @@ export const AddPeptidePage: React.FC = () => {
   const [vaultUserId, setVaultUserId] = useState(DEFAULT_VAULT_USER_ID);
   const [sourceType, setSourceType] = useState<AddSourceType>("manual");
   const [sourceOpenVialId, setSourceOpenVialId] = useState("");
+  const [dosingMode, setDosingMode] = useState<DosingMode>("scheduled");
+  const isOilBased = name.trim().toLowerCase().startsWith("testosterone");
 
   // Schedule states
   const [doseScheduleRows, setDoseScheduleRows] = useState<DoseScheduleRow[]>(() =>
@@ -241,13 +254,14 @@ export const AddPeptidePage: React.FC = () => {
 
   useEffect(() => {
     if (isEditMode || sourceType !== "openVial" || !sourceOpenVialId || !openVialOptions) return;
-    const source = openVialOptions.find((peptide) => (peptide.openVialId || peptide.id) === sourceOpenVialId);
+    const source = getOpenContainerById(openVialOptions, sourceOpenVialId);
     if (!source) return;
 
     queueMicrotask(() => {
       setName(source.name);
       setVialMg(String(source.vialMg));
       setBacWaterMl(String(source.bacWaterMl));
+      setOilVolumeMl(String(source.oilVolumeMl ?? source.bacWaterMl));
       setSyringeSize(getStandardSyringeOption(source.syringeSizeMl) || "custom");
       if (!getStandardSyringeOption(source.syringeSizeMl)) setCustomSyringeSize(String(source.syringeSizeMl));
       setUnitsPerMl(String(source.unitsPerMl));
@@ -269,8 +283,10 @@ export const AddPeptidePage: React.FC = () => {
         setVaultUserId(p.vaultUserId || DEFAULT_VAULT_USER_ID);
         setVialMg(String(p.vialMg));
         setBacWaterMl(String(p.bacWaterMl));
+        setOilVolumeMl(String(p.oilVolumeMl ?? p.bacWaterMl));
         setDesiredDoseValue(String(p.desiredDoseValue));
         setDesiredDoseUnit(p.desiredDoseUnit);
+        setDosingMode(s?.isActive === false ? "adHoc" : "scheduled");
         setDoseScheduleRows(
           s?.doseSchedule?.length
             ? s.doseSchedule.map(phaseToRow)
@@ -483,7 +499,7 @@ export const AddPeptidePage: React.FC = () => {
     }
 
     const mg = parseFloat(vialMg);
-    const water = parseFloat(bacWaterMl);
+    const water = parseFloat(isOilBased ? oilVolumeMl : bacWaterMl);
     const dose = parseFloat(desiredDoseValue);
     const upm = parseFloat(unitsPerMl);
     const size = syringeSize === "custom" ? parseFloat(customSyringeSize) : parseFloat(syringeSize);
@@ -500,17 +516,18 @@ export const AddPeptidePage: React.FC = () => {
       isNaN(size) ||
       size <= 0
     ) {
-      alert("Please enter valid positive values for all reconstitution settings.");
+      alert(isOilBased ? "Please enter valid positive vial, volume, and dose values." : "Please enter valid positive values for all reconstitution settings.");
       return;
     }
 
-    if (!anchorDate) {
+    if (dosingMode === "scheduled" && !anchorDate) {
       alert("Please enter a valid start or last injection date.");
       return;
     }
     const parsedCycleWeeksOn = parseInt(cycleWeeksOn, 10);
     const parsedCycleWeeksOff = parseInt(cycleWeeksOff, 10);
     if (
+      dosingMode === "scheduled" &&
       cycleEnabled &&
       (isNaN(parsedCycleWeeksOn) ||
         parsedCycleWeeksOn <= 0 ||
@@ -521,18 +538,33 @@ export const AddPeptidePage: React.FC = () => {
       return;
     }
     if (!isEditMode && sourceType === "openVial" && !sourceOpenVialId) {
-      alert("Please choose the open vial this peptide should use.");
+      alert("Please choose the open container this peptide should use.");
+      return;
+    }
+    const selectedContainerForUser =
+      sourceType === "openVial" ? getOpenContainerById(openVialOptions, sourceOpenVialId) : undefined;
+    if (
+      selectedContainerForUser?.containerType === "pen" &&
+      selectedContainerForUser.sharedWithUserIds?.length &&
+      !selectedContainerForUser.sharedWithUserIds.includes(vaultUserId)
+    ) {
+      alert("This pen has not been shared with the selected user.");
       return;
     }
 
     const phases: DoseSchedulePhase[] = [];
-    for (const [index, row] of doseScheduleRows.entries()) {
+    for (const [index, row] of dosingMode === "scheduled" ? doseScheduleRows.entries() : []) {
       const isLast = index === doseScheduleRows.length - 1;
       const hasNextPhaseStartDate = Boolean(doseScheduleRows[index + 1]?.startDate);
       const requiresDuration = !isLast && !hasNextPhaseStartDate;
       const phaseDose = parseFloat(row.doseValue);
       const phaseInterval = parseInt(row.intervalDays, 10);
       const phaseDuration = parseInt(row.durationValue, 10);
+
+      if (isLast && row.endDate && row.endDate < anchorDate) {
+        alert("The schedule end date cannot be before the first dose date.");
+        return;
+      }
 
       if (isNaN(phaseDose) || phaseDose <= 0) {
         alert("Each dosing schedule line needs a valid dose.");
@@ -558,34 +590,29 @@ export const AddPeptidePage: React.FC = () => {
       phases.push({
         id: row.id,
         startDate: index > 0 && row.startDate ? row.startDate : undefined,
+        endDate: isLast && row.endDate ? row.endDate : undefined,
         durationType: row.durationType,
         durationValue: requiresDuration ? phaseDuration : undefined,
         intervalDays: row.durationType === "injections" ? phaseInterval : undefined,
         daysOfWeek: row.durationType === "daysOfWeek" ? row.daysOfWeek : undefined,
         doseValue: phaseDose,
         doseUnit: row.doseUnit,
-        isContinuous: isLast,
+        isContinuous: isLast && !row.endDate,
       });
     }
 
     const firstPhase = phases[0];
-    const parsedInterval = firstPhase.durationType === "injections" ? firstPhase.intervalDays || 1 : 7;
-    const firstPhaseDaysOfWeek = firstPhase.durationType === "daysOfWeek" ? firstPhase.daysOfWeek || [] : [];
-    const primaryScheduleType: ScheduleType = firstPhase.durationType === "daysOfWeek" ? "daysOfWeek" : "everyXDays";
+    const parsedInterval = firstPhase?.durationType === "injections" ? firstPhase.intervalDays || 1 : 7;
+    const firstPhaseDaysOfWeek = firstPhase?.durationType === "daysOfWeek" ? firstPhase.daysOfWeek || [] : [];
+    const primaryScheduleType: ScheduleType = firstPhase?.durationType === "daysOfWeek" ? "daysOfWeek" : "everyXDays";
     // Perform calculation
-    const calc = calculateReconstitution({
-      peptideMg: mg,
-      bacWaterMl: water,
-      desiredDoseValue: dose,
-      desiredDoseUnit: desiredDoseUnit,
-      unitsPerMl: upm,
-    });
+    const calc = calculateReconstitution({ peptideMg: mg, bacWaterMl: water, desiredDoseValue: dose, desiredDoseUnit, unitsPerMl: upm });
 
     const peptideId = isEditMode ? id! : crypto.randomUUID();
     const nowIso = new Date().toISOString();
     const selectedSourceOpenVial =
       sourceType === "openVial" && openVialOptions
-        ? openVialOptions.find((peptide) => (peptide.openVialId || peptide.id) === sourceOpenVialId)
+        ? getOpenContainerById(openVialOptions, sourceOpenVialId)
         : undefined;
     const openVialId = isEditMode
       ? existingData?.peptide?.openVialId || peptideId
@@ -606,6 +633,8 @@ export const AddPeptidePage: React.FC = () => {
       doseUnits: calc.doseUnits,
       estimatedDosesPerVial: calc.estimatedDosesPerVial,
       percentOfVialPerDose: calc.percentOfVialPerDose,
+      isOilBased,
+      oilVolumeMl: isOilBased ? water : undefined,
       notes: notes.trim() || undefined,
       sourceStockItemId:
         sourceType === "stock"
@@ -614,6 +643,7 @@ export const AddPeptidePage: React.FC = () => {
       sourceOpenVialId: selectedSourceOpenVial ? openVialId : existingData?.peptide?.sourceOpenVialId,
       vaultUserId,
       openVialId,
+      containerType: selectedSourceOpenVial?.containerType,
       currentVialStartedAt: isEditMode
         ? existingData?.peptide?.currentVialStartedAt
         : selectedSourceOpenVial?.currentVialStartedAt || selectedSourceOpenVial?.createdAt || nowIso,
@@ -632,15 +662,15 @@ export const AddPeptidePage: React.FC = () => {
       scheduleType: primaryScheduleType,
       daysOfWeek: primaryScheduleType === "daysOfWeek" ? firstPhaseDaysOfWeek : undefined,
       intervalDays: primaryScheduleType === "everyXDays" ? parsedInterval : undefined,
-      injectionTime,
-      startDate: anchorType === "startDate" ? anchorDate : undefined,
-      lastInjectionDate: anchorType === "lastInjectionDate" ? anchorDate : undefined,
-      cycleEnabled,
-      cycleWeeksOn: cycleEnabled ? parsedCycleWeeksOn : undefined,
-      cycleWeeksOff: cycleEnabled ? parsedCycleWeeksOff : undefined,
-      doseScheduleStartDate: existingData?.schedule?.doseScheduleStartDate,
-      doseSchedule: phases,
-      isActive: true,
+      injectionTime: dosingMode === "scheduled" ? injectionTime : undefined,
+      startDate: dosingMode === "scheduled" && anchorType === "startDate" ? anchorDate : undefined,
+      lastInjectionDate: dosingMode === "scheduled" && anchorType === "lastInjectionDate" ? anchorDate : undefined,
+      cycleEnabled: dosingMode === "scheduled" ? cycleEnabled : undefined,
+      cycleWeeksOn: dosingMode === "scheduled" && cycleEnabled ? parsedCycleWeeksOn : undefined,
+      cycleWeeksOff: dosingMode === "scheduled" && cycleEnabled ? parsedCycleWeeksOff : undefined,
+      doseScheduleStartDate: dosingMode === "scheduled" ? existingData?.schedule?.doseScheduleStartDate : undefined,
+      doseSchedule: dosingMode === "scheduled" ? phases : undefined,
+      isActive: dosingMode === "scheduled",
       createdAt: existingData?.schedule?.createdAt || nowIso,
       updatedAt: nowIso,
     };
@@ -650,15 +680,15 @@ export const AddPeptidePage: React.FC = () => {
         ? getLegacyScheduleFirstDoseDate(newSchedule) || anchorDate
         : anchorDate;
 
-    newSchedule.doseScheduleStartDate = doseScheduleStartDate;
+    if (dosingMode === "scheduled") newSchedule.doseScheduleStartDate = doseScheduleStartDate;
 
     const existingLogDates = new Set(
       (existingData?.logsList || [])
-        .filter((log) => log.status !== "scheduled")
+        .filter(isCompletedScheduledInjectionLog)
         .map((log) => log.scheduledDate)
     );
     const pastDates =
-      doseScheduleStartDate < today
+      dosingMode === "scheduled" && doseScheduleStartDate < today
         ? getUpcomingInjectionDates(newSchedule, doseScheduleStartDate, addDays(today, -1)).filter(
             (date) => !existingLogDates.has(date)
           )
@@ -734,31 +764,49 @@ export const AddPeptidePage: React.FC = () => {
               onChange={(e) => setSourceType(e.target.value as AddSourceType)}
               options={[
                 { value: addPeptideLocationState?.sourceStockItemId ? "stock" : "manual", label: addPeptideLocationState?.sourceStockItemId ? "From Stock" : "New Vial" },
-                { value: "openVial", label: "Existing Open Vial" },
+                { value: "openVial", label: "Existing Open Container" },
               ]}
             />
           )}
 
           {!isEditMode && sourceType === "openVial" && (
             <Select
-              label="Open Vial"
+              label="Open Container"
               value={sourceOpenVialId}
               onChange={(e) => setSourceOpenVialId(e.target.value)}
               options={[
-                { value: "", label: "Choose open vial" },
+                { value: "", label: "Choose open container" },
                 ...Array.from(
                   new Map(
-                    (openVialOptions || []).map((peptide) => [
+                    (openVialOptions || []).filter((peptide) => {
+                      if (!peptide.isContainerOnly) return true;
+                      return peptide.containerType !== "pen" || !peptide.sharedWithUserIds?.length || peptide.sharedWithUserIds.includes(vaultUserId);
+                    }).map((peptide) => [
                       peptide.openVialId || peptide.id,
                       {
                         value: peptide.openVialId || peptide.id,
-                        label: `${peptide.name} (${peptide.vialMg} mg vial)`,
+                        label: `${peptide.containerLabel || peptide.name} (${peptide.containerType === "pen" ? "pen" : "vial"} · ${peptide.vialMg} mg)`,
                       },
                     ])
                   ).values()
                 ),
               ]}
             />
+          )}
+
+          <Select
+            label="Dosing"
+            value={dosingMode}
+            onChange={(e) => setDosingMode(e.target.value === "adHoc" ? "adHoc" : "scheduled")}
+            options={[
+              { value: "scheduled", label: "Scheduled dosing" },
+              { value: "adHoc", label: "Ad-hoc only (no schedule)" },
+            ]}
+          />
+          {dosingMode === "adHoc" && (
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.4, marginTop: "10px" }}>
+              This opens the vial without adding it to a dosing schedule. Log each injection manually from the Vault.
+            </p>
           )}
         </Card>
         
@@ -793,17 +841,19 @@ export const AddPeptidePage: React.FC = () => {
               required
             />
             <Input
-              label="BAC Water"
+              label={isOilBased ? "Vial Volume" : "BAC Water"}
               type="number"
               inputMode="decimal"
-              value={bacWaterMl}
-              onChange={(e) => setBacWaterMl(e.target.value)}
+              value={isOilBased ? oilVolumeMl : bacWaterMl}
+              onChange={(e) => isOilBased ? setOilVolumeMl(e.target.value) : setBacWaterMl(e.target.value)}
               suffix="mL"
               min="0.01"
               step="any"
               required
             />
           </div>
+
+          {isOilBased && <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", lineHeight: 1.4, marginTop: "-4px" }}>Oil-based product — enter the prefilled vial volume to calculate concentration and draw; no bacteriostatic water is used.</p>}
 
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "12px" }}>
             <Input
@@ -831,14 +881,14 @@ export const AddPeptidePage: React.FC = () => {
 
           <div className="form-row-grid">
             <Select
-              label="Syringe Size"
+              label="Injection Device"
               value={syringeSize}
               onChange={(e) => setSyringeSize(e.target.value)}
               options={[
                 { value: "0.3", label: "0.3 mL" },
                 { value: "0.5", label: "0.5 mL" },
                 { value: "1.0", label: "1.0 mL" },
-                { value: "3.0", label: "3.0 mL" },
+                { value: "3.0", label: "3 mL Pen" },
                 { value: "custom", label: "Custom" },
               ]}
             />
@@ -869,7 +919,7 @@ export const AddPeptidePage: React.FC = () => {
         </Card>
 
         {/* Schedule Settings */}
-        <Card>
+        {dosingMode === "scheduled" && <Card>
           <div
             style={{
               display: "flex",
@@ -995,6 +1045,16 @@ export const AddPeptidePage: React.FC = () => {
                     required={index === 0}
                   />
 
+                  {isLast && (
+                    <Input
+                      label="End Date"
+                      type="date"
+                      value={row.endDate}
+                      onChange={(e) => updateDoseScheduleRow(row.id, { endDate: e.target.value })}
+                      min={anchorDate}
+                    />
+                  )}
+
                   {showDaysOfWeek ? (
                     <>
                       {!isLast && (
@@ -1119,7 +1179,7 @@ export const AddPeptidePage: React.FC = () => {
                         fontWeight: 700,
                       }}
                     >
-                      Continuous phase
+                      {row.endDate ? `Ends ${row.endDate}` : "Continuous phase"}
                     </div>
                   )}
                 </div>
@@ -1240,7 +1300,7 @@ export const AddPeptidePage: React.FC = () => {
             )}
           </div>
 
-        </Card>
+        </Card>}
 
         {/* Notes */}
         <Card>
