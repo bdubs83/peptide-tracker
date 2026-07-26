@@ -283,6 +283,11 @@ const userDoc = (user: User) => doc(firestoreDb, "users", user.uid);
 const userCollection = (user: User, collectionName: SyncCollectionName) =>
   collection(firestoreDb, "users", user.uid, collectionName);
 
+export async function deleteCloudAccountData(user: User) {
+  await Promise.all(collectionNames.map((collectionName) => clearCloudCollection(user, collectionName)));
+  await deleteDoc(userDoc(user));
+}
+
 export async function getLocalDataCounts(): Promise<CloudDataCounts> {
   return {
     peptides: await db.peptides.count(),

@@ -2,6 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import {
   GoogleAuthProvider,
+  OAuthProvider,
   signInWithCredential,
   signInWithPopup,
   signOut,
@@ -25,6 +26,27 @@ export const signInWithGoogle = async () => {
   }
 
   const credential = GoogleAuthProvider.credential(idToken);
+  await signInWithCredential(firebaseAuth, credential);
+};
+
+export const signInWithApple = async () => {
+  if (!Capacitor.isNativePlatform()) {
+    const provider = new OAuthProvider("apple.com");
+    await signInWithPopup(firebaseAuth, provider);
+    return;
+  }
+
+  const result = await FirebaseAuthentication.signInWithApple({
+    skipNativeAuth: true,
+  });
+  const idToken = result.credential?.idToken;
+  const rawNonce = result.credential?.nonce;
+
+  if (!idToken || !rawNonce) {
+    throw new Error("Apple did not return the information needed to sign in. Try again.");
+  }
+
+  const credential = new OAuthProvider("apple.com").credential({ idToken, rawNonce });
   await signInWithCredential(firebaseAuth, credential);
 };
 

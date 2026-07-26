@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useId, useRef, useState, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, type User } from "firebase/auth";
+import { deleteUser, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, type User } from "firebase/auth";
 import { db } from "../../db/db";
 import { activeRecords } from "../../db/activeRecords";
 import { Card } from "../../components/Card";
@@ -9,10 +9,11 @@ import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
 import { Button } from "../../components/Button";
 import { firebaseAuth } from "../../firebase/firebase";
-import { signInWithGoogle, signOutOfCloudAccount } from "../../firebase/nativeGoogleAuth";
+import { signInWithApple, signInWithGoogle, signOutOfCloudAccount } from "../../firebase/nativeGoogleAuth";
 import {
   getCloudDataCounts,
   compareLocalAndCloudData,
+  deleteCloudAccountData,
   getLocalDataCounts,
   hasCloudProfile,
   mergeCloudDataIntoLocal,
@@ -1114,6 +1115,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
     );
   };
 
+  const handleAppleSignIn = () => {
+    runAccountAction(
+      signInWithApple,
+      "Signed in with Apple."
+    );
+  };
+
   const handleSignOut = () => {
     if (!confirm("Sign out of cloud sync on this device? Your local data will stay on this device, but new changes will not sync until you sign in again.")) return;
 
@@ -1122,6 +1130,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
       setIsAutoSyncReviewOpen(false);
       await signOutOfCloudAccount();
     }, "Signed out. This device is back to local-only mode.");
+  };
+
+  const handleDeleteCloudAccount = () => {
+    if (!cloudUser) return;
+    if (!confirm("Delete this cloud-sync account and all cloud data? This cannot be undone. Local data on this device will remain.")) return;
+
+    runAccountAction(async () => {
+      await putAppSetting(autoSyncEnabledKey, false);
+      await deleteCloudAccountData(cloudUser);
+      try {
+        await deleteUser(cloudUser);
+      } catch (error) {
+        if ((error as { code?: string }).code === "auth/requires-recent-login") {
+          throw new Error("For security, sign out and sign in again, then choose Delete Cloud Account immediately.");
+        }
+        throw error;
+      }
+      await signOutOfCloudAccount();
+    }, "Cloud account and cloud data deleted. Local data remains on this device.");
   };
 
   const handleAutoSyncToggle = () => {
@@ -1721,6 +1748,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                 <Button variant="secondary" fullWidth onClick={handleGoogleSignIn} disabled={isAuthBusy}>
                   Continue with Google
                 </Button>
+                <Button variant="secondary" fullWidth onClick={handleAppleSignIn} disabled={isAuthBusy}>
+                  Continue with Apple
+                </Button>
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -1939,6 +1969,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ mode = "full" }) => {
                   <Button variant="secondary" onClick={handleSignOut} disabled={isAuthBusy}>
                     <LogOut size={16} />
                     Sign Out
+                  </Button>
+                  <Button variant="danger" onClick={handleDeleteCloudAccount} disabled={isAuthBusy}>
+                    <Trash2 size={16} />
+                    Delete Cloud Account
                   </Button>
                 </div>
               </div>
