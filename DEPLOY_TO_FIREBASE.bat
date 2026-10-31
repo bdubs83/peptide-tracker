@@ -20,7 +20,9 @@ if errorlevel 1 (
 
 echo.
 echo Uploading to Firebase Hosting...
-call firebase deploy --only hosting
+rem Hosting only. Never deploy Firestore rules from this repository to
+rem unfiltered-inner-circle: the RUIC member portal owns that shared ruleset.
+call firebase deploy --only hosting --project unfiltered-inner-circle
 if errorlevel 1 (
   echo.
   echo Firebase upload failed. Check the message above.

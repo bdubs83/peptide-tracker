@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "deploy:hosting": "npm run build && firebase deploy --only hosting --project unfiltered-inner-circle",
+    "deploy:rules:preview": "firebase deploy --config firebase.rules-preview.json --only firestore:rules --project inner-circle-launch-2026",
     "cap:sync": "npm run cap:sync:android",
     "cap:sync:android": "npm run build && cap sync android",
     "cap:sync:ios": "npm run build && cap sync ios && npm run fix:ios-spm",
